@@ -14,8 +14,8 @@ GTINs added from catalog cross-reference: 59
 Rows still missing GTIN: 7255
 SEO titles generated: 9979
 Permalinks generated: 9979
-Vendor website row matches applied: 5621
-Vendor website descriptions applied: 1606
+Vendor website row matches applied: 5733
+Vendor website descriptions applied: 1718
 Vendor website weights applied: 190
 Counts by vendor:
   BE: 2523
@@ -27,7 +27,9 @@ Counts by vendor:
   Trident: 32
 Vendor website matches:
   Barrens: 3498
+  EacoChem: 97
   MPWSR: 2123
+  Trident: 15
 Notes:
   - Default Unit Cost uses dealer/distributor pricing when available.
   - Price uses list/direct/retail pricing when the source file provided it.
@@ -35,6 +37,10 @@ Notes:
   - GTIN values only populate when they pass a checksum check or come from a verified manual override.
   - SEO fields and permalinks are generated automatically from the cleaned catalog data.
   - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.
+  - JRacenstein matches use exact vendor SKUs from the live catalog cards. Trident and EacoChem matches use exact base product names plus the existing pack suffix.
   - MPWSR website enrichment used 1797 live products and matched 2123 catalog rows.
   - Barrens website enrichment used 3607 live products and matched 3498 catalog rows.
+  - JRacenstein website enrichment matched 0 catalog rows.
+  - Trident website enrichment matched 15 catalog rows.
+  - EacoChem website enrichment matched 97 catalog rows.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.

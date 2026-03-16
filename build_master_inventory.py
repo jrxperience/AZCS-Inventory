@@ -8,9 +8,11 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pdfplumber
 import requests
+from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
@@ -48,6 +50,9 @@ SHOPIFY_VENDOR_SOURCES = {
     },
 }
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AZCSInventoryBot/1.0)"}
+JRACENSTEIN_LISTING_URL = "https://jracenstein.com/jracenstein/"
+TRIDENT_SITEMAP_URL = "https://www.tridentprotects.com/sitemap.xml"
+EACOCHEM_ALL_PRODUCTS_URL = "https://eacochem.com/all-products/"
 
 
 @dataclass
@@ -246,6 +251,20 @@ def product_display_name(item: SourceItem) -> str:
 
 def product_description_text(item: SourceItem) -> str:
     return clean_text(item.description_override or item.description)
+
+
+def split_variant_suffix(item_name: str) -> tuple[str, str]:
+    base, separator, suffix = clean_text(item_name).partition(" - ")
+    return clean_text(base), clean_text(suffix) if separator else ""
+
+
+def combine_title_with_suffix(title: str, suffix: str) -> str:
+    return clean_text(f"{clean_text(title)} - {clean_text(suffix)}" if clean_text(suffix) else title)
+
+
+def path_slug_from_url(url: str) -> str:
+    path = urlparse(url).path.rstrip("/")
+    return clean_text(path.split("/")[-1]) if path else ""
 
 
 def category_segments(value: str) -> list[str]:
@@ -1057,6 +1076,334 @@ def apply_shopify_vendor_enrichments(
     return audit_entries, match_counts, detail_counts, notes
 
 
+def fetch_jracenstein_catalog_cards() -> dict[str, dict[str, str]]:
+    catalog: dict[str, dict[str, str]] = {}
+    page = 1
+    while True:
+        response = requests.get(
+            JRACENSTEIN_LISTING_URL,
+            params={"mode": 4, "sort": "alphaasc", "limit": 100, "page": page},
+            headers=HTTP_HEADERS,
+            timeout=15,
+        )
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        cards = soup.select(".card")
+        found = 0
+        new_entries = 0
+        for card in cards:
+            title_link = card.select_one(".card-title a")
+            sku_node = card.select_one(".card-sku")
+            if not title_link or not sku_node:
+                continue
+            title = clean_text(title_link.get_text(" ", strip=True))
+            sku_text = clean_text(sku_node.get_text(" ", strip=True)).replace("SKU:", "").strip()
+            url = clean_text(title_link.get("href", ""))
+            sku_key = normalize_sku(sku_text)
+            if title and sku_key and url:
+                if sku_key not in catalog:
+                    new_entries += 1
+                catalog[sku_key] = {"title": title, "url": url}
+                found += 1
+        if found == 0 or found < 100 or new_entries == 0 or page >= 10:
+            break
+        page += 1
+    return catalog
+
+
+def fetch_jracenstein_description(url: str) -> str:
+    response = requests.get(url, headers=HTTP_HEADERS, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    description_node = soup.select_one(".productView-description .productView-description-tabContent")
+    if description_node:
+        description = clean_text(description_node.get_text(" ", strip=True))
+        description = re.sub(r"^Description\s+", "", description, flags=re.I)
+        if len(description) >= 40:
+            return trim_words(description, 1000)
+    meta_match = re.search(r'<meta name="description" content="(.*?)"', response.text, re.I | re.S)
+    return trim_words(clean_text(meta_match.group(1)) if meta_match else "", 1000)
+
+
+TRIDENT_URL_ALIASES = {
+    "Hurricane Cat 4": "hurricane-cat-4",
+    "Hurricane Cat 5": "hurricane-cat-5",
+    "Hurricane Cat 5 1/2": "hurricane-cat-5-half-kit",
+    "Tidal Wave Gel": "tidal-wave",
+    "Tidal Wave Spray": "tidal-wave",
+}
+
+
+def fetch_trident_product_pages(target_names: set[str]) -> dict[str, dict[str, str]]:
+    response = requests.get(TRIDENT_SITEMAP_URL, headers=HTTP_HEADERS, timeout=30)
+    response.raise_for_status()
+    urls = re.findall(r"<loc>(.*?)</loc>", response.text)
+    slug_to_url = {url.rstrip("/").split("/")[-1]: url for url in urls}
+    candidate_urls: set[str] = set()
+    for target_name in target_names:
+        cleaned_name = clean_text(re.sub(r"\s*\([^)]*\)", "", target_name))
+        alias_slug = TRIDENT_URL_ALIASES.get(cleaned_name)
+        slug = alias_slug or slugify(cleaned_name.replace("1/2", "half"))
+        if slug in slug_to_url:
+            candidate_urls.add(slug_to_url[slug])
+
+    products: dict[str, dict[str, str]] = {}
+
+    for url in sorted(candidate_urls):
+        html = requests.get(url, headers=HTTP_HEADERS, timeout=30).text
+        if "html-product-details-page" not in html:
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+        title_node = soup.select_one(".product-name")
+        desc_node = soup.select_one(".full-description")
+        short_node = soup.select_one(".short-description")
+        title = clean_text(title_node.get_text(" ", strip=True) if title_node else "")
+        if not title:
+            continue
+        description = clean_text(desc_node.get_text(" ", strip=True) if desc_node else "")
+        short_description = clean_text(short_node.get_text(" ", strip=True) if short_node else "")
+        if short_description and short_description.upper() not in description.upper():
+            description = build_description(short_description, description)
+        products[normalize_name(title)] = {
+            "title": title,
+            "description": trim_words(description, 1000),
+            "url": url,
+        }
+
+    return products
+
+
+def fetch_eacochem_product_pages(target_names: set[str]) -> dict[str, dict[str, str]]:
+    response = requests.get(EACOCHEM_ALL_PRODUCTS_URL, headers=HTTP_HEADERS, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    urls: dict[str, tuple[str, str]] = {}
+    for link in soup.find_all("a", href=True):
+        href = clean_text(link.get("href", ""))
+        if "/eaco_products/" not in href:
+            continue
+        text = clean_text(link.get_text(" ", strip=True))
+        key = normalize_name(text)
+        if href and key and href not in urls:
+            urls[href] = (text, key)
+
+    products: dict[str, dict[str, str]] = {}
+    target_keys = {normalize_name(name) for name in target_names if normalize_name(name)}
+    candidate_urls = [url for url, (_, key) in urls.items() if key in target_keys]
+    for url in candidate_urls:
+        html = requests.get(url, headers=HTTP_HEADERS, timeout=30).text
+        soup = BeautifulSoup(html, "html.parser")
+        title_node = soup.select_one("h1") or soup.select_one(".entry-title")
+        if title_node is None:
+            continue
+        title = clean_text(title_node.get_text(" ", strip=True))
+        subtitle_node = soup.select_one("h2")
+        subtitle = clean_text(subtitle_node.get_text(" ", strip=True) if subtitle_node else "")
+        meta_match = re.search(r'<meta name="description" content="(.*?)"', html, re.I | re.S)
+        meta_description = clean_text(meta_match.group(1)) if meta_match else ""
+        if not title:
+            continue
+        description = build_description(subtitle, meta_description)
+        products[normalize_name(title)] = {
+            "title": title,
+            "description": trim_words(description, 1000),
+            "url": url,
+        }
+
+    return products
+
+
+def apply_direct_vendor_enrichments(
+    items: list[SourceItem],
+) -> tuple[list[EnrichmentAuditEntry], Counter[str], Counter[str], list[str]]:
+    audit_entries: list[EnrichmentAuditEntry] = []
+    match_counts: Counter[str] = Counter()
+    detail_counts: Counter[str] = Counter()
+    notes: list[str] = []
+
+    # JRacenstein exact SKU matches from catalog cards.
+    try:
+        catalog = fetch_jracenstein_catalog_cards()
+        for item in [candidate for candidate in items if candidate.vendor == "JRacenstein"]:
+            sku_key = normalize_sku(item.vendor_code or item.sku)
+            if sku_key not in catalog:
+                continue
+            entry = catalog[sku_key]
+            title = clean_text(entry["title"])
+            url = entry["url"]
+            if title and title != product_display_name(item):
+                item.customer_facing_name_override = title
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="jracenstein_catalog_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Customer-facing Name",
+                        value=title,
+                        source=url,
+                        details="Matched on exact SKU from the J.Racenstein catalog page.",
+                    )
+                )
+                detail_counts["customer_names"] += 1
+            slug = path_slug_from_url(url)
+            if is_meaningful_shopify_handle(slug):
+                item.permalink_override = slug
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="jracenstein_catalog_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Permalink",
+                        value=slug,
+                        source=url,
+                        details="Using the J.Racenstein product URL slug as the preferred permalink.",
+                    )
+                )
+                detail_counts["permalinks"] += 1
+            match_counts["JRacenstein"] += 1
+        notes.append(f"JRacenstein website enrichment matched {match_counts['JRacenstein']} catalog rows.")
+    except Exception as exc:
+        notes.append(f"JRacenstein website enrichment skipped: {exc}")
+
+    # Trident exact base-title matches against product pages.
+    try:
+        trident_items = [candidate for candidate in items if candidate.vendor == "Trident"]
+        trident_products = fetch_trident_product_pages({split_variant_suffix(item.item_name)[0] for item in trident_items})
+        for item in trident_items:
+            base_name, pack_suffix = split_variant_suffix(item.item_name)
+            key = normalize_name(base_name)
+            if key not in trident_products:
+                continue
+            product = trident_products[key]
+            customer_name = combine_title_with_suffix(product["title"], pack_suffix)
+            if customer_name and customer_name != product_display_name(item):
+                item.customer_facing_name_override = customer_name
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="trident_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Customer-facing Name",
+                        value=customer_name,
+                        source=product["url"],
+                        details="Matched on exact base product title from the Trident site.",
+                    )
+                )
+                detail_counts["customer_names"] += 1
+            description = product["description"]
+            if description and normalize_name(description) != normalize_name(product_description_text(item)):
+                item.description_override = description
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="trident_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Description",
+                        value=trim_words(description, 120),
+                        source=product["url"],
+                        details="Pulled from the Trident product page description.",
+                    )
+                )
+                detail_counts["descriptions"] += 1
+            slug = slugify(customer_name)
+            if slug:
+                item.permalink_override = slug
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="trident_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Permalink",
+                        value=slug,
+                        source=product["url"],
+                        details="Using a slug derived from the Trident product title and pack size.",
+                    )
+                )
+                detail_counts["permalinks"] += 1
+            match_counts["Trident"] += 1
+        notes.append(f"Trident website enrichment matched {match_counts['Trident']} catalog rows.")
+    except Exception as exc:
+        notes.append(f"Trident website enrichment skipped: {exc}")
+
+    # EacoChem exact base-title matches against product pages.
+    try:
+        eacochem_items = [candidate for candidate in items if candidate.vendor == "EacoChem"]
+        eacochem_products = fetch_eacochem_product_pages({split_variant_suffix(item.item_name)[0] for item in eacochem_items})
+        for item in eacochem_items:
+            base_name, pack_suffix = split_variant_suffix(item.item_name)
+            key = normalize_name(base_name)
+            if key not in eacochem_products:
+                continue
+            product = eacochem_products[key]
+            customer_name = combine_title_with_suffix(product["title"], pack_suffix)
+            if customer_name and customer_name != product_display_name(item):
+                item.customer_facing_name_override = customer_name
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="eacochem_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Customer-facing Name",
+                        value=customer_name,
+                        source=product["url"],
+                        details="Matched on exact base product title from the EaCo Chem site.",
+                    )
+                )
+                detail_counts["customer_names"] += 1
+            description = product["description"]
+            if description and normalize_name(description) != normalize_name(product_description_text(item)):
+                item.description_override = description
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="eacochem_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Description",
+                        value=trim_words(description, 120),
+                        source=product["url"],
+                        details="Pulled from the EaCo Chem product page description.",
+                    )
+                )
+                detail_counts["descriptions"] += 1
+            slug = slugify(customer_name)
+            if slug:
+                item.permalink_override = slug
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="eacochem_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Permalink",
+                        value=slug,
+                        source=product["url"],
+                        details="Using a slug derived from the EaCo Chem product title and pack size.",
+                    )
+                )
+                detail_counts["permalinks"] += 1
+            match_counts["EacoChem"] += 1
+        notes.append(f"EacoChem website enrichment matched {match_counts['EacoChem']} catalog rows.")
+    except Exception as exc:
+        notes.append(f"EacoChem website enrichment skipped: {exc}")
+
+    return audit_entries, match_counts, detail_counts, notes
+
+
 def item_lookup_tokens(item: SourceItem) -> set[str]:
     tokens: set[str] = set()
 
@@ -1685,6 +2032,7 @@ def summarize(
     lines.append("  - GTIN values only populate when they pass a checksum check or come from a verified manual override.")
     lines.append("  - SEO fields and permalinks are generated automatically from the cleaned catalog data.")
     lines.append("  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.")
+    lines.append("  - JRacenstein matches use exact vendor SKUs from the live catalog cards. Trident and EacoChem matches use exact base product names plus the existing pack suffix.")
     for note in website_notes:
         lines.append(f"  - {note}")
     lines.append("  - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.")
@@ -1714,13 +2062,17 @@ def main() -> None:
     counts_by_vendor = Counter(item.vendor for item in source_items)
     generated_skus = generate_unique_skus(source_items)
     website_audit_entries, website_match_counts, website_detail_counts, website_notes = apply_shopify_vendor_enrichments(source_items)
+    direct_audit_entries, direct_match_counts, direct_detail_counts, direct_notes = apply_direct_vendor_enrichments(source_items)
+    website_match_counts.update(direct_match_counts)
+    website_detail_counts.update(direct_detail_counts)
+    website_notes.extend(direct_notes)
 
     master_rows = [build_square_row(item, square_headers) for item in source_items]
     permalinks_generated = assign_unique_permalinks(master_rows)
     review_rows = build_review_rows(merge_issues + rename_issues + parser_issues)
     write_enrichment_audit_csv(
         ENRICHMENT_AUDIT_OUT_PATH,
-        verified_audit_entries + catalog_audit_entries + website_audit_entries,
+        verified_audit_entries + catalog_audit_entries + website_audit_entries + direct_audit_entries,
     )
 
     write_master_csv(MASTER_OUT_PATH, square_headers, master_rows)
