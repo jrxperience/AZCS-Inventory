@@ -14,6 +14,9 @@ GTINs added from catalog cross-reference: 59
 Rows still missing GTIN: 7255
 SEO titles generated: 9979
 Permalinks generated: 9979
+Vendor website row matches applied: 5621
+Vendor website descriptions applied: 1606
+Vendor website weights applied: 190
 Counts by vendor:
   BE: 2523
   Barrens: 4345
@@ -22,10 +25,16 @@ Counts by vendor:
   JRacenstein: 324
   MPWSR: 2413
   Trident: 32
+Vendor website matches:
+  Barrens: 3498
+  MPWSR: 2123
 Notes:
   - Default Unit Cost uses dealer/distributor pricing when available.
   - Price uses list/direct/retail pricing when the source file provided it.
   - Items without a selling price were imported as Stockable=Y and Sellable=N.
   - GTIN values only populate when they pass a checksum check or come from a verified manual override.
   - SEO fields and permalinks are generated automatically from the cleaned catalog data.
+  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.
+  - MPWSR website enrichment used 1797 live products and matched 2123 catalog rows.
+  - Barrens website enrichment used 3607 live products and matched 3498 catalog rows.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.

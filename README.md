@@ -46,6 +46,7 @@ Current dedupe behavior:
 - Same-vendor duplicate names are either merged when they look truly duplicate, or renamed with case-pack / GTIN / SKU labels when they look like separate variants.
 - GTIN values only populate when they pass checksum validation, come from a verified manual override, or are inferred from an exact manufacturer-style code already tied to a validated GTIN elsewhere in the catalog.
 - SEO title, SEO description, social metadata, and permalinks are generated automatically for every row.
+- Live website enrichment is currently enabled for MPWSR and Barens. It uses their Shopify product feeds as a primary source for exact SKU matches and unique exact-title matches, and can fill customer-facing names, descriptions, permalinks, and weights when those fields are published.
 
 ## Track deliveries, stock, and selling prices
 

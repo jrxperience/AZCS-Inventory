@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import html
+import json
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
@@ -8,6 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 import pdfplumber
+import requests
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
@@ -32,6 +35,19 @@ MONEY_RE = re.compile(r"\$?\s*\d[\d,\s]*\.\d{2}")
 GTIN_LENGTHS = {8, 12, 13, 14}
 GENERIC_CATEGORY_SEGMENTS = {"EQUIPMENT"}
 GENERIC_SEO_WORDS = {"AND", "THE", "FOR", "WITH", "KIT", "PACK", "CASE", "REGULAR"}
+WEIGHT_PRECISION = Decimal("0.001")
+GRAMS_PER_POUND = Decimal("453.59237")
+SHOPIFY_VENDOR_SOURCES = {
+    "MPWSR": {
+        "feed_url": "https://mpwsr.com/products.json",
+        "product_base": "https://mpwsr.com/products/",
+    },
+    "Barrens": {
+        "feed_url": "https://www.barens.com/products.json",
+        "product_base": "https://www.barens.com/products/",
+    },
+}
+HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AZCSInventoryBot/1.0)"}
 
 
 @dataclass
@@ -49,8 +65,12 @@ class SourceItem:
     vendor_code: str = ""
     notes: list[str] = field(default_factory=list)
     generated_sku: bool = False
+    customer_facing_name_override: str = ""
+    description_override: str = ""
+    permalink_override: str = ""
     seo_title_override: str = ""
     seo_description_override: str = ""
+    weight_lb_override: Decimal | None = None
 
 
 @dataclass
@@ -186,6 +206,16 @@ def build_description(*parts: str) -> str:
     return " | ".join(cleaned_parts)
 
 
+def strip_html_to_text(value: object) -> str:
+    text = str(value or "")
+    text = re.sub(r"(?i)<br\s*/?>", " ", text)
+    text = re.sub(r"(?i)</p>", " ", text)
+    text = re.sub(r"(?i)</li>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    return clean_text(text)
+
+
 def trim_words(text: str, max_length: int) -> str:
     cleaned = clean_text(text)
     if len(cleaned) <= max_length:
@@ -200,6 +230,22 @@ def slugify(value: str) -> str:
     text = clean_text(value).lower()
     text = re.sub(r"[^a-z0-9]+", "-", text)
     return text.strip("-")
+
+
+def format_weight(value: Decimal | None) -> str:
+    if value is None:
+        return ""
+    quantized = value.quantize(WEIGHT_PRECISION, rounding=ROUND_HALF_UP)
+    text = format(quantized, "f").rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def product_display_name(item: SourceItem) -> str:
+    return clean_text(item.customer_facing_name_override or item.item_name)
+
+
+def product_description_text(item: SourceItem) -> str:
+    return clean_text(item.description_override or item.description)
 
 
 def category_segments(value: str) -> list[str]:
@@ -224,7 +270,7 @@ def build_seo_title(item: SourceItem) -> str:
     if clean_text(item.seo_title_override):
         return trim_words(item.seo_title_override, 78)
 
-    base = seo_keyword_base(item.item_name)
+    base = seo_keyword_base(product_display_name(item))
     context = category_tail(item.category)
     suffix = "AZ Cleaning Supplies"
     candidates = []
@@ -241,7 +287,11 @@ def build_seo_description(item: SourceItem, seo_title: str) -> str:
     if clean_text(item.seo_description_override):
         return trim_words(item.seo_description_override, 160)
 
-    base = seo_keyword_base(item.item_name)
+    description_override = clean_text(item.description_override)
+    if description_override and normalize_name(description_override) != normalize_name(product_display_name(item)):
+        return trim_words(f"{description_override} Available at AZ Cleaning Supplies.", 160)
+
+    base = seo_keyword_base(product_display_name(item))
     description_parts = [base]
     context = category_tail(item.category)
     if context and context.upper() not in base.upper():
@@ -790,6 +840,223 @@ def load_verified_enrichments(path: Path) -> dict[tuple[str, str, str], dict[str
     return enrichments
 
 
+def fetch_shopify_products(feed_url: str) -> list[dict[str, object]]:
+    page = 1
+    products: list[dict[str, object]] = []
+
+    while True:
+        response = requests.get(
+            feed_url,
+            params={"limit": 250, "page": page},
+            headers=HTTP_HEADERS,
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        batch = payload.get("products", [])
+        if not isinstance(batch, list) or not batch:
+            break
+        products.extend(batch)
+        if len(batch) < 250:
+            break
+        page += 1
+
+    return products
+
+
+def shopify_exact_title_key(value: str) -> str:
+    return normalize_name(value)
+
+
+def shopify_description_text(body_html: object) -> str:
+    text = strip_html_to_text(body_html)
+    if len(text) < 32:
+        return ""
+    return trim_words(text, 1000)
+
+
+def is_descriptive_shopify_title(title: str, sku: str) -> bool:
+    cleaned = clean_text(title)
+    if not cleaned:
+        return False
+    if normalize_name(cleaned) == normalize_name(sku):
+        return False
+    descriptive_tokens = [
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9./-]*", cleaned)
+        if len(re.sub(r"[^A-Za-z]", "", token)) >= 4
+    ]
+    if any(char.isdigit() for char in cleaned) and len(descriptive_tokens) < 2:
+        return False
+    return bool(descriptive_tokens)
+
+
+def is_meaningful_shopify_handle(handle: str) -> bool:
+    cleaned = clean_text(handle)
+    if not cleaned or not re.search(r"[A-Za-z]", cleaned):
+        return False
+    if re.fullmatch(r"product[_-][0-9a-f-]{16,}", cleaned.lower()):
+        return False
+    return True
+
+
+def shopify_weight_lb(grams: object) -> Decimal | None:
+    try:
+        value = Decimal(str(grams or 0))
+    except Exception:
+        return None
+    if value <= 0:
+        return None
+    return (value / GRAMS_PER_POUND).quantize(WEIGHT_PRECISION, rounding=ROUND_HALF_UP)
+
+
+def apply_shopify_vendor_enrichments(
+    items: list[SourceItem],
+) -> tuple[list[EnrichmentAuditEntry], Counter[str], Counter[str], list[str]]:
+    audit_entries: list[EnrichmentAuditEntry] = []
+    match_counts: Counter[str] = Counter()
+    detail_counts: Counter[str] = Counter()
+    notes: list[str] = []
+
+    for vendor, config in SHOPIFY_VENDOR_SOURCES.items():
+        try:
+            products = fetch_shopify_products(config["feed_url"])
+        except Exception as exc:
+            notes.append(f"{vendor} website enrichment skipped: {exc}")
+            continue
+
+        sku_matches: dict[str, list[tuple[dict[str, object], dict[str, object]]]] = defaultdict(list)
+        title_matches: dict[str, list[tuple[dict[str, object], dict[str, object]]]] = defaultdict(list)
+        for product in products:
+            product_title = clean_text(product.get("title", ""))
+            variants = product.get("variants", [])
+            if not isinstance(variants, list):
+                continue
+            if len(variants) == 1 and product_title:
+                variant = variants[0]
+                if isinstance(variant, dict):
+                    title_matches[shopify_exact_title_key(product_title)].append((product, variant))
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                sku_key = normalize_sku(variant.get("sku", ""))
+                if sku_key:
+                    sku_matches[sku_key].append((product, variant))
+
+        unique_sku_matches = {
+            key: matches[0]
+            for key, matches in sku_matches.items()
+            if len(matches) == 1
+        }
+        unique_title_matches = {
+            key: matches[0]
+            for key, matches in title_matches.items()
+            if len(matches) == 1
+        }
+
+        for item in [candidate for candidate in items if candidate.vendor == vendor]:
+            match: tuple[dict[str, object], dict[str, object]] | None = None
+            match_type = ""
+            for token in (normalize_sku(item.vendor_code), normalize_sku(item.sku)):
+                if token and token in unique_sku_matches:
+                    match = unique_sku_matches[token]
+                    match_type = "shopify_sku_match"
+                    break
+            if match is None:
+                title_key = shopify_exact_title_key(item.item_name)
+                if title_key and title_key in unique_title_matches:
+                    match = unique_title_matches[title_key]
+                    match_type = "shopify_title_match"
+            if match is None:
+                continue
+
+            product, variant = match
+            product_title = clean_text(product.get("title", ""))
+            product_url = f"{config['product_base']}{clean_text(product.get('handle', ''))}"
+            if (
+                product_title
+                and is_descriptive_shopify_title(product_title, item.vendor_code or item.sku)
+                and product_title != product_display_name(item)
+            ):
+                item.customer_facing_name_override = product_title
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type=match_type,
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Customer-facing Name",
+                        value=product_title,
+                        source=product_url,
+                        details="Pulled from the vendor website product title.",
+                    )
+                )
+                detail_counts["customer_names"] += 1
+
+            description_text = shopify_description_text(product.get("body_html", ""))
+            if description_text and normalize_name(description_text) != normalize_name(product_description_text(item)):
+                item.description_override = description_text
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type=match_type,
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Description",
+                        value=trim_words(description_text, 120),
+                        source=product_url,
+                        details="Pulled from the vendor website product description.",
+                    )
+                )
+                detail_counts["descriptions"] += 1
+
+            handle = clean_text(product.get("handle", ""))
+            if handle and is_meaningful_shopify_handle(handle):
+                item.permalink_override = handle
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type=match_type,
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Permalink",
+                        value=handle,
+                        source=product_url,
+                        details="Using the vendor website product handle as the preferred permalink.",
+                    )
+                )
+                detail_counts["permalinks"] += 1
+
+            weight_lb = shopify_weight_lb(variant.get("grams"))
+            if weight_lb is not None:
+                item.weight_lb_override = weight_lb
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type=match_type,
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Weight (lb)",
+                        value=format_weight(weight_lb),
+                        source=product_url,
+                        details="Converted from the vendor website shipping weight in grams.",
+                    )
+                )
+                detail_counts["weights"] += 1
+
+            match_counts[vendor] += 1
+
+        notes.append(
+            f"{vendor} website enrichment used {len(products)} live products and matched {match_counts[vendor]} catalog rows."
+        )
+
+    return audit_entries, match_counts, detail_counts, notes
+
+
 def item_lookup_tokens(item: SourceItem) -> set[str]:
     tokens: set[str] = set()
 
@@ -1212,14 +1479,16 @@ def generate_unique_skus(items: list[SourceItem]) -> int:
 
 def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row = {field: "" for field in fieldnames}
+    customer_facing_name = product_display_name(item)
+    description_text = product_description_text(item)
     seo_title = build_seo_title(item)
     seo_description = build_seo_description(item, seo_title)
     row["Token"] = ""
     row["Item Name"] = clean_text(item.item_name)
-    row["Customer-facing Name"] = clean_text(item.item_name)
+    row["Customer-facing Name"] = customer_facing_name
     row["Variation Name"] = "Regular"
     row["SKU"] = item.sku
-    row["Description"] = clean_text(item.description)
+    row["Description"] = description_text
     row["Categories"] = clean_text(item.category)
     row["Reporting Category"] = clean_text(item.reporting_category)
     row["SEO Title"] = seo_title
@@ -1227,6 +1496,7 @@ def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row["GTIN"] = valid_gtin(item.gtin)
     row["Square Online Item Visibility"] = "Hidden"
     row["Item Type"] = "Physical"
+    row["Weight (lb)"] = format_weight(item.weight_lb_override)
     row["Social Media Link Title"] = seo_title
     row["Social Media Link Description"] = seo_description
     row["Shipping Enabled"] = "N"
@@ -1242,6 +1512,7 @@ def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row["Default Unit Cost"] = format_money(item.default_unit_cost)
     row["Default Vendor Name"] = item.vendor
     row["Default Vendor Code"] = clean_text(item.vendor_code or item.sku)
+    row["Permalink"] = clean_text(item.permalink_override)
     return row
 
 
@@ -1250,7 +1521,7 @@ def assign_unique_permalinks(rows: list[dict[str, str]]) -> int:
     assigned = 0
 
     for row in rows:
-        base = slugify(row.get("Customer-facing Name") or row.get("Item Name") or row.get("SKU"))
+        base = slugify(row.get("Permalink") or row.get("Customer-facing Name") or row.get("Item Name") or row.get("SKU"))
         if not base:
             base = slugify(row.get("SKU") or "item")
         candidate = base
@@ -1375,6 +1646,9 @@ def summarize(
     missing_gtins: int,
     seo_titles_generated: int,
     permalinks_generated: int,
+    website_match_counts: Counter[str],
+    website_detail_counts: Counter[str],
+    website_notes: list[str],
 ) -> str:
     lines = [
         f"Square master inventory: {MASTER_OUT_PATH}",
@@ -1393,16 +1667,26 @@ def summarize(
         f"Rows still missing GTIN: {missing_gtins}",
         f"SEO titles generated: {seo_titles_generated}",
         f"Permalinks generated: {permalinks_generated}",
+        f"Vendor website row matches applied: {sum(website_match_counts.values())}",
+        f"Vendor website descriptions applied: {website_detail_counts['descriptions']}",
+        f"Vendor website weights applied: {website_detail_counts['weights']}",
         "Counts by vendor:",
     ]
     for vendor in sorted(counts_by_vendor):
         lines.append(f"  {vendor}: {counts_by_vendor[vendor]}")
+    if website_match_counts:
+        lines.append("Vendor website matches:")
+        for vendor in sorted(website_match_counts):
+            lines.append(f"  {vendor}: {website_match_counts[vendor]}")
     lines.append("Notes:")
     lines.append("  - Default Unit Cost uses dealer/distributor pricing when available.")
     lines.append("  - Price uses list/direct/retail pricing when the source file provided it.")
     lines.append("  - Items without a selling price were imported as Stockable=Y and Sellable=N.")
     lines.append("  - GTIN values only populate when they pass a checksum check or come from a verified manual override.")
     lines.append("  - SEO fields and permalinks are generated automatically from the cleaned catalog data.")
+    lines.append("  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.")
+    for note in website_notes:
+        lines.append(f"  - {note}")
     lines.append("  - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.")
     return "\n".join(lines)
 
@@ -1429,11 +1713,15 @@ def main() -> None:
     catalog_audit_entries = infer_missing_gtins_from_catalog(source_items)
     counts_by_vendor = Counter(item.vendor for item in source_items)
     generated_skus = generate_unique_skus(source_items)
+    website_audit_entries, website_match_counts, website_detail_counts, website_notes = apply_shopify_vendor_enrichments(source_items)
 
     master_rows = [build_square_row(item, square_headers) for item in source_items]
     permalinks_generated = assign_unique_permalinks(master_rows)
     review_rows = build_review_rows(merge_issues + rename_issues + parser_issues)
-    write_enrichment_audit_csv(ENRICHMENT_AUDIT_OUT_PATH, verified_audit_entries + catalog_audit_entries)
+    write_enrichment_audit_csv(
+        ENRICHMENT_AUDIT_OUT_PATH,
+        verified_audit_entries + catalog_audit_entries + website_audit_entries,
+    )
 
     write_master_csv(MASTER_OUT_PATH, square_headers, master_rows)
     write_review_csv(REVIEW_OUT_PATH, review_rows)
@@ -1453,6 +1741,9 @@ def main() -> None:
         missing_gtins=sum(1 for row in master_rows if not clean_text(row.get("GTIN", ""))),
         seo_titles_generated=sum(1 for row in master_rows if clean_text(row.get("SEO Title", ""))),
         permalinks_generated=permalinks_generated,
+        website_match_counts=website_match_counts,
+        website_detail_counts=website_detail_counts,
+        website_notes=website_notes,
     )
     SUMMARY_OUT_PATH.write_text(summary, encoding="utf-8")
     print(summary)
