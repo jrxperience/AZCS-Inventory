@@ -1,0 +1,20 @@
+Square master inventory: C:\Codex\AZCS Inventory\square_master_inventory.csv
+Overlap review file: C:\Codex\AZCS Inventory\square_master_inventory_overlap_review.csv
+Source items normalized: 10006
+Rows included in Square import: 9907
+Rows sent to review: 99
+Generated replacement SKUs: 486
+Duplicate rows skipped inside the same source file: 1
+Counts by vendor:
+  BE: 2526
+  Barrens: 4354
+  EacoChem: 111
+  INSECO: 241
+  JRacenstein: 325
+  MPWSR: 2417
+  Trident: 32
+Notes:
+  - Default Unit Cost uses dealer/distributor pricing when available.
+  - Price uses list/direct/retail pricing when the source file provided it.
+  - Items without a selling price were imported as Stockable=Y and Sellable=N.
+  - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.
