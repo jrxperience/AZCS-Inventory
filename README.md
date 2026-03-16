@@ -17,6 +17,8 @@ This repo now supports four repeatable jobs:
   Put manual stock adjustments or opening balances here. Use [`templates/inventory_adjustments_template.csv`](/C:/Codex/AZCS%20Inventory/templates/inventory_adjustments_template.csv).
 - `inputs/price_updates/`
   Put selling-price changes here. Use [`templates/price_updates_template.csv`](/C:/Codex/AZCS%20Inventory/templates/price_updates_template.csv).
+- `inputs/verified_product_enrichment.csv`
+  Optional manual overrides for high-confidence GTIN fixes and verified SEO metadata. Use [`templates/verified_product_enrichment_template.csv`](/C:/Codex/AZCS%20Inventory/templates/verified_product_enrichment_template.csv).
 - `templates/`
   Holds the Square import template and transaction templates.
 - `outputs/`
@@ -35,12 +37,15 @@ This generates:
 - `outputs/square_master_inventory.csv`
 - `outputs/square_master_inventory_overlap_review.csv`
 - `outputs/square_master_inventory_summary.txt`
+- `outputs/product_enrichment_audit.csv`
 
 Current dedupe behavior:
 
 - Exact cross-vendor item matches are merged into one inventory row.
 - When multiple possible costs exist for the same merged item, the higher `Default Unit Cost` wins.
 - Same-vendor duplicate names are either merged when they look truly duplicate, or renamed with case-pack / GTIN / SKU labels when they look like separate variants.
+- GTIN values only populate when they pass checksum validation, come from a verified manual override, or are inferred from an exact manufacturer-style code already tied to a validated GTIN elsewhere in the catalog.
+- SEO title, SEO description, social metadata, and permalinks are generated automatically for every row.
 
 ## Track deliveries, stock, and selling prices
 

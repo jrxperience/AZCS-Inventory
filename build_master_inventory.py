@@ -20,13 +20,18 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 
 TEMPLATE_PATH = TEMPLATE_DIR / "Square Import Template.csv"
 LEGACY_TEMPLATE_PATH = BASE_DIR / "Square Import Template.csv"
+VERIFIED_ENRICHMENT_PATH = INPUT_DIR / "verified_product_enrichment.csv"
 
 MASTER_OUT_PATH = OUTPUT_DIR / "square_master_inventory.csv"
 REVIEW_OUT_PATH = OUTPUT_DIR / "square_master_inventory_overlap_review.csv"
 SUMMARY_OUT_PATH = OUTPUT_DIR / "square_master_inventory_summary.txt"
+ENRICHMENT_AUDIT_OUT_PATH = OUTPUT_DIR / "product_enrichment_audit.csv"
 
 CENT = Decimal("0.01")
 MONEY_RE = re.compile(r"\$?\s*\d[\d,\s]*\.\d{2}")
+GTIN_LENGTHS = {8, 12, 13, 14}
+GENERIC_CATEGORY_SEGMENTS = {"EQUIPMENT"}
+GENERIC_SEO_WORDS = {"AND", "THE", "FOR", "WITH", "KIT", "PACK", "CASE", "REGULAR"}
 
 
 @dataclass
@@ -44,6 +49,8 @@ class SourceItem:
     vendor_code: str = ""
     notes: list[str] = field(default_factory=list)
     generated_sku: bool = False
+    seo_title_override: str = ""
+    seo_description_override: str = ""
 
 
 @dataclass
@@ -57,6 +64,19 @@ class ReviewIssue:
     category: str = ""
     default_unit_cost: str = ""
     price: str = ""
+    details: str = ""
+
+
+@dataclass
+class EnrichmentAuditEntry:
+    enrichment_type: str
+    vendor: str
+    sku: str
+    vendor_code: str
+    item_name: str
+    field: str
+    value: str
+    source: str
     details: str = ""
 
 
@@ -99,6 +119,17 @@ def normalize_digits(value: object) -> str:
 
 def normalize_sku(value: object) -> str:
     return re.sub(r"\s+", "", clean_text(value).upper())
+
+
+def gtin_checksum_valid(value: str) -> bool:
+    if not value.isdigit() or len(value) not in GTIN_LENGTHS:
+        return False
+    digits = [int(char) for char in value]
+    total = 0
+    for index, digit in enumerate(reversed(digits[:-1]), start=1):
+        total += digit * (3 if index % 2 == 1 else 1)
+    expected_check_digit = (10 - (total % 10)) % 10
+    return expected_check_digit == digits[-1]
 
 
 def parse_money(value: object) -> Decimal | None:
@@ -147,12 +178,79 @@ def strip_product_markers(name: str) -> tuple[str, list[str]]:
 
 def valid_gtin(value: object) -> str:
     digits = normalize_digits(value)
-    return digits if len(digits) in {8, 12, 13, 14} else ""
+    return digits if gtin_checksum_valid(digits) else ""
 
 
 def build_description(*parts: str) -> str:
     cleaned_parts = [clean_text(part) for part in parts if clean_text(part)]
     return " | ".join(cleaned_parts)
+
+
+def trim_words(text: str, max_length: int) -> str:
+    cleaned = clean_text(text)
+    if len(cleaned) <= max_length:
+        return cleaned
+    truncated = cleaned[: max_length - 1].rstrip(" ,;:-")
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated.rstrip(" ,;:-") + "..."
+
+
+def slugify(value: str) -> str:
+    text = clean_text(value).lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-")
+
+
+def category_segments(value: str) -> list[str]:
+    return [clean_text(segment) for segment in str(value or "").split(">") if clean_text(segment)]
+
+
+def category_tail(value: str) -> str:
+    segments = category_segments(value)
+    if len(segments) <= 1:
+        return ""
+    for segment in reversed(segments):
+        if segment.upper() not in GENERIC_CATEGORY_SEGMENTS:
+            return segment
+    return segments[-1] if segments else ""
+
+
+def seo_keyword_base(item_name: str) -> str:
+    return clean_text(re.sub(r"\[[^\]]+\]", "", item_name))
+
+
+def build_seo_title(item: SourceItem) -> str:
+    if clean_text(item.seo_title_override):
+        return trim_words(item.seo_title_override, 78)
+
+    base = seo_keyword_base(item.item_name)
+    context = category_tail(item.category)
+    suffix = "AZ Cleaning Supplies"
+    candidates = []
+    if context and context.upper() not in base.upper():
+        candidates.append(f"{base} | {context} | {suffix}")
+    candidates.append(f"{base} | {suffix}")
+    for candidate in candidates:
+        if len(candidate) <= 78:
+            return candidate
+    return trim_words(candidates[-1], 78)
+
+
+def build_seo_description(item: SourceItem, seo_title: str) -> str:
+    if clean_text(item.seo_description_override):
+        return trim_words(item.seo_description_override, 160)
+
+    base = seo_keyword_base(item.item_name)
+    description_parts = [base]
+    context = category_tail(item.category)
+    if context and context.upper() not in base.upper():
+        description_parts.append(f"Category: {context}")
+    vendor_code = clean_text(item.vendor_code or item.sku)
+    if vendor_code:
+        description_parts.append(f"Vendor code: {vendor_code}")
+    description_parts.append("Available at AZ Cleaning Supplies")
+    return trim_words(". ".join(description_parts) + ".", 160)
 
 
 def make_category(vendor: str, category: str = "") -> str:
@@ -656,6 +754,161 @@ def parse_eaco_fleet(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
     return items, issues
 
 
+def load_verified_enrichments(path: Path) -> dict[tuple[str, str, str], dict[str, str]]:
+    if not path.exists():
+        return {}
+
+    rows = read_csv_any(path)
+    if not rows:
+        return {}
+
+    headers = [clean_text(value) for value in rows[0]]
+    index = {name: position for position, name in enumerate(headers)}
+    enrichments: dict[tuple[str, str, str], dict[str, str]] = {}
+
+    def optional_value(values: list[str], column_name: str) -> str:
+        if column_name not in index:
+            return ""
+        position = index[column_name]
+        return values[position] if position < len(values) else ""
+
+    for row in rows[1:]:
+        padded = row + [""] * (len(headers) - len(row))
+        vendor = clean_text(padded[index["vendor"]]).upper()
+        match_field = clean_text(padded[index["match_field"]]).lower()
+        match_value = clean_text(padded[index["match_value"]])
+        if not vendor or not match_field or not match_value:
+            continue
+        enrichments[(vendor, match_field, clean_text(match_value).upper())] = {
+            "gtin": valid_gtin(optional_value(padded, "gtin")),
+            "seo_title": clean_text(optional_value(padded, "seo_title")),
+            "seo_description": clean_text(optional_value(padded, "seo_description")),
+            "source_url": clean_text(optional_value(padded, "source_url")),
+            "notes": clean_text(optional_value(padded, "notes")),
+        }
+
+    return enrichments
+
+
+def item_lookup_tokens(item: SourceItem) -> set[str]:
+    tokens: set[str] = set()
+
+    def maybe_add(token: str) -> None:
+        candidate = clean_text(token).upper().strip(".,;:()[]{}")
+        if len(candidate) < 5:
+            return
+        if not any(char.isdigit() for char in candidate):
+            return
+        if candidate.isdigit() and len(candidate) < 6:
+            return
+        if re.fullmatch(r"\d+(?:\.\d+)?[A-Z]+", candidate):
+            return
+        tokens.add(candidate)
+
+    maybe_add(item.sku)
+    maybe_add(item.vendor_code)
+    first_word = clean_text(item.item_name).split(" ", 1)[0]
+    maybe_add(first_word)
+    return tokens
+
+
+def apply_verified_enrichments(
+    items: list[SourceItem],
+    enrichments: dict[tuple[str, str, str], dict[str, str]],
+) -> list[EnrichmentAuditEntry]:
+    audit_entries: list[EnrichmentAuditEntry] = []
+
+    for item in items:
+        keys = [
+            (item.vendor.upper(), "vendor_code", clean_text(item.vendor_code).upper()),
+            (item.vendor.upper(), "sku", clean_text(item.sku).upper()),
+            (item.vendor.upper(), "item_name", clean_text(item.item_name).upper()),
+        ]
+        enrichment = next((enrichments[key] for key in keys if key in enrichments), None)
+        if enrichment is None:
+            continue
+
+        gtin = valid_gtin(enrichment.get("gtin", ""))
+        if gtin and gtin != valid_gtin(item.gtin):
+            item.gtin = gtin
+            audit_entries.append(
+                EnrichmentAuditEntry(
+                    enrichment_type="verified_override",
+                    vendor=item.vendor,
+                    sku=item.sku,
+                    vendor_code=clean_text(item.vendor_code or item.sku),
+                    item_name=item.item_name,
+                    field="GTIN",
+                    value=gtin,
+                    source=enrichment.get("source_url", ""),
+                    details=enrichment.get("notes", ""),
+                )
+            )
+
+        if clean_text(enrichment.get("seo_title", "")):
+            item.seo_title_override = enrichment["seo_title"]
+        if clean_text(enrichment.get("seo_description", "")):
+            item.seo_description_override = enrichment["seo_description"]
+
+    return audit_entries
+
+
+def infer_missing_gtins_from_catalog(items: list[SourceItem]) -> list[EnrichmentAuditEntry]:
+    token_to_gtins: dict[str, set[str]] = defaultdict(set)
+    token_to_sources: dict[str, list[SourceItem]] = defaultdict(list)
+
+    for item in items:
+        gtin = valid_gtin(item.gtin)
+        if not gtin:
+            continue
+        for token in item_lookup_tokens(item):
+            token_to_gtins[token].add(gtin)
+            token_to_sources[token].append(item)
+
+    unique_token_map = {
+        token: next(iter(gtins))
+        for token, gtins in token_to_gtins.items()
+        if len(gtins) == 1
+    }
+
+    audit_entries: list[EnrichmentAuditEntry] = []
+    for item in items:
+        if valid_gtin(item.gtin):
+            continue
+
+        matching_tokens = [token for token in item_lookup_tokens(item) if token in unique_token_map]
+        unique_gtins = {unique_token_map[token] for token in matching_tokens}
+        if len(unique_gtins) != 1 or not matching_tokens:
+            continue
+
+        gtin = next(iter(unique_gtins))
+        chosen_token = sorted(matching_tokens, key=len, reverse=True)[0]
+        source_item = next(
+            source
+            for source in token_to_sources[chosen_token]
+            if valid_gtin(source.gtin) == gtin
+        )
+        item.gtin = gtin
+        audit_entries.append(
+            EnrichmentAuditEntry(
+                enrichment_type="catalog_cross_reference",
+                vendor=item.vendor,
+                sku=item.sku,
+                vendor_code=clean_text(item.vendor_code or item.sku),
+                item_name=item.item_name,
+                field="GTIN",
+                value=gtin,
+                source=source_item.vendor,
+                details=(
+                    f"Matched on token {chosen_token} from {source_item.vendor} "
+                    f"SKU {clean_text(source_item.sku)} ({clean_text(source_item.item_name)})."
+                ),
+            )
+        )
+
+    return audit_entries
+
+
 def dedupe_same_source(items: list[SourceItem]) -> tuple[list[SourceItem], int]:
     seen: set[tuple[str, ...]] = set()
     kept: list[SourceItem] = []
@@ -959,6 +1212,8 @@ def generate_unique_skus(items: list[SourceItem]) -> int:
 
 def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row = {field: "" for field in fieldnames}
+    seo_title = build_seo_title(item)
+    seo_description = build_seo_description(item, seo_title)
     row["Token"] = ""
     row["Item Name"] = clean_text(item.item_name)
     row["Customer-facing Name"] = clean_text(item.item_name)
@@ -967,9 +1222,13 @@ def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row["Description"] = clean_text(item.description)
     row["Categories"] = clean_text(item.category)
     row["Reporting Category"] = clean_text(item.reporting_category)
+    row["SEO Title"] = seo_title
+    row["SEO Description"] = seo_description
     row["GTIN"] = valid_gtin(item.gtin)
     row["Square Online Item Visibility"] = "Hidden"
     row["Item Type"] = "Physical"
+    row["Social Media Link Title"] = seo_title
+    row["Social Media Link Description"] = seo_description
     row["Shipping Enabled"] = "N"
     row["Self-serve Ordering Enabled"] = "N"
     row["Delivery Enabled"] = "N"
@@ -984,6 +1243,30 @@ def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row["Default Vendor Name"] = item.vendor
     row["Default Vendor Code"] = clean_text(item.vendor_code or item.sku)
     return row
+
+
+def assign_unique_permalinks(rows: list[dict[str, str]]) -> int:
+    used: dict[str, int] = {}
+    assigned = 0
+
+    for row in rows:
+        base = slugify(row.get("Customer-facing Name") or row.get("Item Name") or row.get("SKU"))
+        if not base:
+            base = slugify(row.get("SKU") or "item")
+        candidate = base
+        if candidate in used:
+            sku_suffix = slugify(row.get("SKU", ""))
+            if sku_suffix:
+                candidate = f"{base}-{sku_suffix}"
+        counter = 2
+        while candidate in used:
+            candidate = f"{base}-{counter}"
+            counter += 1
+        used[candidate] = 1
+        row["Permalink"] = candidate
+        assigned += 1
+
+    return assigned
 
 
 def write_master_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
@@ -1034,6 +1317,37 @@ def write_review_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+def write_enrichment_audit_csv(path: Path, entries: list[EnrichmentAuditEntry]) -> None:
+    fieldnames = [
+        "enrichment_type",
+        "vendor",
+        "sku",
+        "vendor_code",
+        "item_name",
+        "field",
+        "value",
+        "source",
+        "details",
+    ]
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow(
+                {
+                    "enrichment_type": entry.enrichment_type,
+                    "vendor": clean_text(entry.vendor),
+                    "sku": clean_text(entry.sku),
+                    "vendor_code": clean_text(entry.vendor_code),
+                    "item_name": clean_text(entry.item_name),
+                    "field": clean_text(entry.field),
+                    "value": clean_text(entry.value),
+                    "source": clean_text(entry.source),
+                    "details": clean_text(entry.details),
+                }
+            )
+
+
 SOURCE_DEFINITIONS = [
     (["*Barrens*Pricelist*.csv"], parse_barrens),
     (["*MPWSR*Price List*.csv"], parse_mpwsr),
@@ -1055,10 +1369,17 @@ def summarize(
     skipped_duplicates: int,
     merged_groups: int,
     renamed_rows: int,
+    retained_gtins: int,
+    verified_gtins_added: int,
+    catalog_gtins_added: int,
+    missing_gtins: int,
+    seo_titles_generated: int,
+    permalinks_generated: int,
 ) -> str:
     lines = [
         f"Square master inventory: {MASTER_OUT_PATH}",
         f"Overlap review file: {REVIEW_OUT_PATH}",
+        f"Enrichment audit file: {ENRICHMENT_AUDIT_OUT_PATH}",
         f"Source items normalized: {total_source_items}",
         f"Rows included in Square import: {included_rows}",
         f"Rows sent to review: {len(review_rows)}",
@@ -1066,6 +1387,12 @@ def summarize(
         f"Rows renamed to avoid duplicate item names: {renamed_rows}",
         f"Generated replacement SKUs: {generated_skus}",
         f"Duplicate rows skipped inside the same source file: {skipped_duplicates}",
+        f"GTINs retained from source files: {retained_gtins}",
+        f"GTINs added from verified overrides: {verified_gtins_added}",
+        f"GTINs added from catalog cross-reference: {catalog_gtins_added}",
+        f"Rows still missing GTIN: {missing_gtins}",
+        f"SEO titles generated: {seo_titles_generated}",
+        f"Permalinks generated: {permalinks_generated}",
         "Counts by vendor:",
     ]
     for vendor in sorted(counts_by_vendor):
@@ -1074,6 +1401,8 @@ def summarize(
     lines.append("  - Default Unit Cost uses dealer/distributor pricing when available.")
     lines.append("  - Price uses list/direct/retail pricing when the source file provided it.")
     lines.append("  - Items without a selling price were imported as Stockable=Y and Sellable=N.")
+    lines.append("  - GTIN values only populate when they pass a checksum check or come from a verified manual override.")
+    lines.append("  - SEO fields and permalinks are generated automatically from the cleaned catalog data.")
     lines.append("  - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.")
     return "\n".join(lines)
 
@@ -1081,6 +1410,7 @@ def summarize(
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     square_headers = load_square_headers(resolve_template_path())
+    verified_enrichments = load_verified_enrichments(VERIFIED_ENRICHMENT_PATH)
 
     source_items: list[SourceItem] = []
     parser_issues: list[ReviewIssue] = []
@@ -1094,11 +1424,16 @@ def main() -> None:
     source_items, skipped_duplicates = dedupe_same_source(source_items)
     source_items, merge_issues, merged_groups = merge_duplicate_items(source_items)
     source_items, rename_issues, same_vendor_merged_groups, renamed_rows = resolve_same_vendor_name_collisions(source_items)
+    retained_gtins = sum(1 for item in source_items if valid_gtin(item.gtin))
+    verified_audit_entries = apply_verified_enrichments(source_items, verified_enrichments)
+    catalog_audit_entries = infer_missing_gtins_from_catalog(source_items)
     counts_by_vendor = Counter(item.vendor for item in source_items)
     generated_skus = generate_unique_skus(source_items)
 
     master_rows = [build_square_row(item, square_headers) for item in source_items]
+    permalinks_generated = assign_unique_permalinks(master_rows)
     review_rows = build_review_rows(merge_issues + rename_issues + parser_issues)
+    write_enrichment_audit_csv(ENRICHMENT_AUDIT_OUT_PATH, verified_audit_entries + catalog_audit_entries)
 
     write_master_csv(MASTER_OUT_PATH, square_headers, master_rows)
     write_review_csv(REVIEW_OUT_PATH, review_rows)
@@ -1112,6 +1447,12 @@ def main() -> None:
         skipped_duplicates=skipped_duplicates,
         merged_groups=merged_groups + same_vendor_merged_groups,
         renamed_rows=renamed_rows,
+        retained_gtins=retained_gtins,
+        verified_gtins_added=sum(1 for entry in verified_audit_entries if entry.field == "GTIN"),
+        catalog_gtins_added=sum(1 for entry in catalog_audit_entries if entry.field == "GTIN"),
+        missing_gtins=sum(1 for row in master_rows if not clean_text(row.get("GTIN", ""))),
+        seo_titles_generated=sum(1 for row in master_rows if clean_text(row.get("SEO Title", ""))),
+        permalinks_generated=permalinks_generated,
     )
     SUMMARY_OUT_PATH.write_text(summary, encoding="utf-8")
     print(summary)

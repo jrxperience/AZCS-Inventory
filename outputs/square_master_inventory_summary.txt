@@ -1,5 +1,6 @@
 Square master inventory: C:\Codex\AZCS Inventory\outputs\square_master_inventory.csv
 Overlap review file: C:\Codex\AZCS Inventory\outputs\square_master_inventory_overlap_review.csv
+Enrichment audit file: C:\Codex\AZCS Inventory\outputs\product_enrichment_audit.csv
 Source items normalized: 9979
 Rows included in Square import: 9979
 Rows sent to review: 50
@@ -7,6 +8,12 @@ Duplicate item groups merged into one inventory row: 27
 Rows renamed to avoid duplicate item names: 47
 Generated replacement SKUs: 520
 Duplicate rows skipped inside the same source file: 1
+GTINs retained from source files: 2664
+GTINs added from verified overrides: 1
+GTINs added from catalog cross-reference: 59
+Rows still missing GTIN: 7255
+SEO titles generated: 9979
+Permalinks generated: 9979
 Counts by vendor:
   BE: 2523
   Barrens: 4345
@@ -19,4 +26,6 @@ Notes:
   - Default Unit Cost uses dealer/distributor pricing when available.
   - Price uses list/direct/retail pricing when the source file provided it.
   - Items without a selling price were imported as Stockable=Y and Sellable=N.
+  - GTIN values only populate when they pass a checksum check or come from a verified manual override.
+  - SEO fields and permalinks are generated automatically from the cleaned catalog data.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.
