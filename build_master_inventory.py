@@ -56,6 +56,8 @@ JRACENSTEIN_LISTING_URL = f"{JRACENSTEIN_BASE_URL}/jracenstein/"
 JRACENSTEIN_GRAPHQL_URL = f"{JRACENSTEIN_BASE_URL}/graphql"
 TRIDENT_SITEMAP_URL = "https://www.tridentprotects.com/sitemap.xml"
 EACOCHEM_ALL_PRODUCTS_URL = "https://eacochem.com/all-products/"
+GOLD_ASSASSIN_BASE_URL = "https://www.goldassassin.com"
+GOLD_ASSASSIN_SITEMAP_URL = f"{GOLD_ASSASSIN_BASE_URL}/store-products-sitemap.xml"
 JRACENSTEIN_DISTINCTIVE_KEYWORDS = (
     "SCRAPER",
     "BRUSH",
@@ -1671,6 +1673,71 @@ def fetch_eacochem_product_pages(target_names: set[str]) -> dict[str, dict[str, 
     return products
 
 
+def fetch_gold_assassin_products() -> dict[str, dict[str, object]]:
+    response = requests.get(GOLD_ASSASSIN_SITEMAP_URL, headers=HTTP_HEADERS, timeout=30)
+    response.raise_for_status()
+    urls = [html.unescape(url) for url in re.findall(r"<loc>(.*?)</loc>", response.text)]
+    products: dict[str, dict[str, object]] = {}
+
+    for url in urls:
+        page_html = ""
+        for _ in range(3):
+            try:
+                page_response = requests.get(url, headers=HTTP_HEADERS, timeout=30)
+                page_response.raise_for_status()
+                page_html = page_response.text
+                break
+            except Exception:
+                continue
+        if not page_html:
+            continue
+
+        soup = BeautifulSoup(page_html, "html.parser")
+        product_data: dict[str, object] | None = None
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                payload = json.loads(script.get_text(strip=True))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if clean_text(payload.get("@type", "")).lower() != "product":
+                continue
+            sku = normalize_sku(payload.get("sku", ""))
+            if not sku:
+                continue
+            product_data = payload
+            break
+        if product_data is None:
+            continue
+
+        sku = normalize_sku(product_data.get("sku", ""))
+        title = clean_text(product_data.get("name", ""))
+        description = trim_words(strip_html_to_text(product_data.get("description", "")), 1000)
+        offer_data = product_data.get("Offers") or product_data.get("offers") or {}
+        weight_match = re.search(
+            rf'"sku":"{re.escape(sku)}","weight":(\d+(?:\.\d+)?)',
+            page_html,
+            re.I,
+        )
+        weight_lb = None
+        if weight_match:
+            try:
+                weight_lb = Decimal(weight_match.group(1)).quantize(WEIGHT_PRECISION, rounding=ROUND_HALF_UP)
+            except Exception:
+                weight_lb = None
+
+        products[sku] = {
+            "title": title,
+            "description": description,
+            "url": clean_text(offer_data.get("url", "")) or url,
+            "weight_lb": weight_lb,
+            "sku": sku,
+        }
+
+    return products
+
+
 def apply_direct_vendor_enrichments(
     items: list[SourceItem],
 ) -> tuple[list[EnrichmentAuditEntry], Counter[str], Counter[str], list[str]]:
@@ -1932,6 +1999,105 @@ def apply_direct_vendor_enrichments(
         notes.append(f"EacoChem website enrichment matched {match_counts['EacoChem']} catalog rows.")
     except Exception as exc:
         notes.append(f"EacoChem website enrichment skipped: {exc}")
+
+    # Gold Assassin exact SKU matches against the manufacturer site.
+    try:
+        gold_products = fetch_gold_assassin_products()
+        gold_items = [
+            candidate
+            for candidate in items
+            if candidate.vendor == "MPWSR"
+            and normalize_sku(candidate.vendor_code or candidate.sku) in gold_products
+        ]
+        skipped_weight_conflicts = 0
+
+        for item in gold_items:
+            gold_product = gold_products[normalize_sku(item.vendor_code or item.sku)]
+            customer_name = clean_text(gold_product.get("title", ""))
+            product_url = clean_text(gold_product.get("url", ""))
+            if customer_name and customer_name != product_display_name(item):
+                item.customer_facing_name_override = customer_name
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="gold_assassin_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Customer-facing Name",
+                        value=customer_name,
+                        source=product_url,
+                        details="Matched on exact SKU from the Gold Assassin manufacturer site.",
+                    )
+                )
+                detail_counts["customer_names"] += 1
+
+            description = clean_text(gold_product.get("description", ""))
+            if description and normalize_name(description) != normalize_name(product_description_text(item)):
+                item.description_override = description
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="gold_assassin_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Description",
+                        value=trim_words(description, 120),
+                        source=product_url,
+                        details="Pulled from the Gold Assassin product page description.",
+                    )
+                )
+                detail_counts["descriptions"] += 1
+
+            permalink = slugify(customer_name)
+            if permalink:
+                item.permalink_override = permalink
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="gold_assassin_direct_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Permalink",
+                        value=permalink,
+                        source=product_url,
+                        details="Using a permalink derived from the Gold Assassin product title.",
+                    )
+                )
+                detail_counts["permalinks"] += 1
+
+            weight_lb = gold_product.get("weight_lb")
+            if isinstance(weight_lb, Decimal):
+                current_weight = item.weight_lb_override
+                if current_weight is None or abs(current_weight - weight_lb) <= Decimal("1.0"):
+                    item.weight_lb_override = weight_lb
+                    audit_entries.append(
+                        EnrichmentAuditEntry(
+                            enrichment_type="gold_assassin_direct_match",
+                            vendor=item.vendor,
+                            sku=item.sku,
+                            vendor_code=clean_text(item.vendor_code or item.sku),
+                            item_name=item.item_name,
+                            field="Weight (lb)",
+                            value=format_weight(weight_lb),
+                            source=product_url,
+                            details="Pulled from the Gold Assassin product page item weight.",
+                        )
+                    )
+                    detail_counts["weights"] += 1
+                else:
+                    skipped_weight_conflicts += 1
+
+            match_counts["GoldAssassin"] += 1
+
+        note = f"Gold Assassin website enrichment matched {match_counts['GoldAssassin']} exact SKU rows."
+        if skipped_weight_conflicts:
+            note += f" Left {skipped_weight_conflicts} conflicting existing weights unchanged."
+        notes.append(note)
+    except Exception as exc:
+        notes.append(f"Gold Assassin website enrichment skipped: {exc}")
 
     return audit_entries, match_counts, detail_counts, notes
 

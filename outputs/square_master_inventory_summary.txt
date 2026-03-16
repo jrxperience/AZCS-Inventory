@@ -14,10 +14,10 @@ GTINs added from catalog cross-reference: 59
 Rows still missing GTIN: 7020
 SEO titles generated: 9979
 Permalinks generated: 9979
-Vendor website row matches applied: 5969
+Vendor website row matches applied: 5971
 Vendor website GTINs applied: 235
-Vendor website descriptions applied: 1954
-Vendor website weights applied: 426
+Vendor website descriptions applied: 1956
+Vendor website weights applied: 427
 Counts by vendor:
   BE: 2523
   Barrens: 4345
@@ -29,6 +29,7 @@ Counts by vendor:
 Vendor website matches:
   Barrens: 3498
   EacoChem: 97
+  GoldAssassin: 2
   JRacenstein: 236
   MPWSR: 2123
   Trident: 15
@@ -45,4 +46,5 @@ Notes:
   - JRacenstein website enrichment matched 236 exact code rows.
   - Trident website enrichment matched 15 catalog rows.
   - EacoChem website enrichment matched 97 catalog rows.
+  - Gold Assassin website enrichment matched 2 exact SKU rows. Left 1 conflicting existing weights unchanged.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.

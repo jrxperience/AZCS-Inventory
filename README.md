@@ -48,6 +48,7 @@ Current dedupe behavior:
 - SEO title, SEO description, social metadata, and permalinks are generated automatically for every row.
 - Live website enrichment is currently enabled for MPWSR and Barens. It uses their Shopify product feeds as a primary source for exact SKU matches and unique exact-title matches, and can fill customer-facing names, descriptions, permalinks, and weights when those fields are published.
 - JRacenstein enrichment now uses the live Storefront catalog for exact product or variant code matches. When a code match is exact, it can fill customer-facing names, descriptions, GTINs, weights, and stronger permalinks.
+- Gold Assassin enrichment is enabled for exact live manufacturer SKUs found in the catalog. It can tighten names/descriptions/permalinks and fill missing weights when the manufacturer site publishes them clearly.
 - Direct product-page enrichment is also enabled for Trident and EaCo Chem. It uses exact base product-name matches and preserves the existing pack-size suffix in your catalog rows.
 
 ## Track deliveries, stock, and selling prices
