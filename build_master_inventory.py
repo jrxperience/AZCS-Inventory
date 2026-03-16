@@ -7,6 +7,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, ROUND_HALF_UP
+from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -50,9 +51,100 @@ SHOPIFY_VENDOR_SOURCES = {
     },
 }
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AZCSInventoryBot/1.0)"}
-JRACENSTEIN_LISTING_URL = "https://jracenstein.com/jracenstein/"
+JRACENSTEIN_BASE_URL = "https://jracenstein.com"
+JRACENSTEIN_LISTING_URL = f"{JRACENSTEIN_BASE_URL}/jracenstein/"
+JRACENSTEIN_GRAPHQL_URL = f"{JRACENSTEIN_BASE_URL}/graphql"
 TRIDENT_SITEMAP_URL = "https://www.tridentprotects.com/sitemap.xml"
 EACOCHEM_ALL_PRODUCTS_URL = "https://eacochem.com/all-products/"
+JRACENSTEIN_DISTINCTIVE_KEYWORDS = (
+    "SCRAPER",
+    "BRUSH",
+    "DUSTER",
+    "SQUEEGEE",
+    "CHANNEL",
+    "SLEEVE",
+    "HANDLE",
+    "POLE",
+    "CLIP",
+    "RUBBER",
+    "HOLSTER",
+    "KIT",
+    "TIP",
+)
+JRACENSTEIN_SEARCH_QUERY = """
+query SearchProducts($term: String!) {
+  site {
+    search {
+      searchProducts(filters: {searchTerm: $term}) {
+        products(first: 8) {
+          edges {
+            node {
+              path
+              name
+              sku
+              upc
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+JRACENSTEIN_PRODUCT_QUERY = """
+query ProductByPath($path: String!) {
+  site {
+    route(path: $path) {
+      node {
+        __typename
+        ... on Product {
+          path
+          name
+          sku
+          upc
+          gtin
+          mpn
+          weight {
+            value
+            unit
+          }
+          description
+          variants(first: 250) {
+            edges {
+              node {
+                sku
+                upc
+                gtin
+                mpn
+                weight {
+                  value
+                  unit
+                }
+                productOptions {
+                  edges {
+                    node {
+                      displayName
+                      ... on MultipleChoiceOption {
+                        values(first: 25) {
+                          edges {
+                            node {
+                              label
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
 
 
 @dataclass
@@ -1076,53 +1168,419 @@ def apply_shopify_vendor_enrichments(
     return audit_entries, match_counts, detail_counts, notes
 
 
-def fetch_jracenstein_catalog_cards() -> dict[str, dict[str, str]]:
-    catalog: dict[str, dict[str, str]] = {}
-    page = 1
-    while True:
-        response = requests.get(
-            JRACENSTEIN_LISTING_URL,
-            params={"mode": 4, "sort": "alphaasc", "limit": 100, "page": page},
-            headers=HTTP_HEADERS,
-            timeout=15,
-        )
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        cards = soup.select(".card")
-        found = 0
-        new_entries = 0
-        for card in cards:
-            title_link = card.select_one(".card-title a")
-            sku_node = card.select_one(".card-sku")
-            if not title_link or not sku_node:
-                continue
-            title = clean_text(title_link.get_text(" ", strip=True))
-            sku_text = clean_text(sku_node.get_text(" ", strip=True)).replace("SKU:", "").strip()
-            url = clean_text(title_link.get("href", ""))
-            sku_key = normalize_sku(sku_text)
-            if title and sku_key and url:
-                if sku_key not in catalog:
-                    new_entries += 1
-                catalog[sku_key] = {"title": title, "url": url}
-                found += 1
-        if found == 0 or found < 100 or new_entries == 0 or page >= 10:
-            break
-        page += 1
-    return catalog
+def jracenstein_clean_identifier(value: object) -> str:
+    return clean_text(str(value or "").replace("\x00", ""))
 
 
-def fetch_jracenstein_description(url: str) -> str:
-    response = requests.get(url, headers=HTTP_HEADERS, timeout=30)
+def jracenstein_stripped_numeric_code(value: object) -> str:
+    digits = normalize_digits(jracenstein_clean_identifier(value))
+    return digits.lstrip("0") or digits
+
+
+def measurement_to_lb(value: object) -> Decimal | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        amount = Decimal(str(value.get("value")))
+    except Exception:
+        return None
+    if amount <= 0:
+        return None
+    unit = clean_text(value.get("unit", "")).lower()
+    if unit in {"lb", "lbs", "pound", "pounds"}:
+        pounds = amount
+    elif unit in {"oz", "ounce", "ounces"}:
+        pounds = amount / Decimal("16")
+    elif unit in {"g", "gram", "grams"}:
+        pounds = amount / GRAMS_PER_POUND
+    else:
+        return None
+    return pounds.quantize(WEIGHT_PRECISION, rounding=ROUND_HALF_UP)
+
+
+def normalize_numeric_hint(value: str) -> str:
+    cleaned = clean_text(value)
+    if "." in cleaned:
+        cleaned = cleaned.rstrip("0").rstrip(".")
+    return cleaned
+
+
+def extract_size_hints(value: str) -> set[str]:
+    text = clean_text(re.sub(r"\[\s*Case[^\]]*\]", " ", value, flags=re.I)).upper()
+    hints: set[str] = set()
+
+    for match in re.finditer(r'(\d+(?:\.\d+)?)\s*(?:INCH(?:ES)?|IN\b|")', text):
+        hints.add(normalize_numeric_hint(match.group(1)))
+
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        hints.add(normalize_numeric_hint(text))
+    elif any(
+        token in text
+        for token in ("INCH", "BRASS", "STAINLESS", "COMPLETE", "CHANNEL", "SQUEEGEE", "SLEEVE", "RUBBER")
+    ):
+        for match in re.finditer(r"(?<![A-Z0-9])(\d+(?:\.\d+)?)(?![A-Z0-9])", text):
+            hints.add(normalize_numeric_hint(match.group(1)))
+
+    return {hint for hint in hints if hint}
+
+
+def extract_case_suffix_from_name(value: str) -> str:
+    match = re.search(r"(\[Case[^\]]+\])", value, re.I)
+    return clean_text(match.group(1)) if match else ""
+
+
+def jracenstein_similarity_key(value: str) -> str:
+    text = clean_text(value).upper().replace("PRO+", "PROPLUS").replace("W/", "WITH ")
+    text = re.sub(r"\[\s*CASE[^\]]*\]", " ", text, flags=re.I)
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def jracenstein_variant_labels(variant: dict[str, object]) -> list[str]:
+    labels: list[str] = []
+    option_edges = variant.get("productOptions", {}).get("edges", []) if isinstance(variant, dict) else []
+    for option_edge in option_edges:
+        option = option_edge.get("node", {}) if isinstance(option_edge, dict) else {}
+        value_edges = option.get("values", {}).get("edges", []) if isinstance(option, dict) else []
+        option_values = [
+            clean_text(value_edge.get("node", {}).get("label", ""))
+            for value_edge in value_edges
+            if isinstance(value_edge, dict) and clean_text(value_edge.get("node", {}).get("label", ""))
+        ]
+        if option_values:
+            labels.append(", ".join(option_values))
+    return labels
+
+
+def fetch_jracenstein_storefront_token(session: requests.Session) -> str:
+    response = session.get(JRACENSTEIN_LISTING_URL, headers=HTTP_HEADERS, timeout=30)
     response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    description_node = soup.select_one(".productView-description .productView-description-tabContent")
-    if description_node:
-        description = clean_text(description_node.get_text(" ", strip=True))
-        description = re.sub(r"^Description\s+", "", description, flags=re.I)
-        if len(description) >= 40:
-            return trim_words(description, 1000)
-    meta_match = re.search(r'<meta name="description" content="(.*?)"', response.text, re.I | re.S)
-    return trim_words(clean_text(meta_match.group(1)) if meta_match else "", 1000)
+    match = re.search(r'const STOREFRONT_TOKEN = "([^"]+)"', response.text)
+    if not match:
+        raise RuntimeError("Could not extract the JRacenstein Storefront token.")
+    return clean_text(match.group(1))
+
+
+def jracenstein_graphql(
+    session: requests.Session,
+    token: str,
+    query: str,
+    variables: dict[str, object],
+) -> dict[str, object]:
+    response = session.post(
+        JRACENSTEIN_GRAPHQL_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            **HTTP_HEADERS,
+        },
+        json={"query": query, "variables": variables},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("errors"):
+        raise RuntimeError(str(payload["errors"]))
+    return payload.get("data", {})
+
+
+def search_jracenstein_products(
+    session: requests.Session,
+    token: str,
+    term: str,
+    search_cache: dict[str, list[dict[str, object]]],
+) -> list[dict[str, object]]:
+    cleaned_term = jracenstein_clean_identifier(term)
+    if not cleaned_term:
+        return []
+    if cleaned_term not in search_cache:
+        data = jracenstein_graphql(session, token, JRACENSTEIN_SEARCH_QUERY, {"term": cleaned_term})
+        edges = data.get("site", {}).get("search", {}).get("searchProducts", {}).get("products", {}).get("edges", [])
+        search_cache[cleaned_term] = [
+            edge.get("node", {})
+            for edge in edges
+            if isinstance(edge, dict) and isinstance(edge.get("node"), dict)
+        ]
+    return search_cache[cleaned_term]
+
+
+def fetch_jracenstein_product_data(
+    session: requests.Session,
+    token: str,
+    path: str,
+    product_cache: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    cleaned_path = clean_text(path)
+    if not cleaned_path:
+        return {}
+    if cleaned_path not in product_cache:
+        data = jracenstein_graphql(session, token, JRACENSTEIN_PRODUCT_QUERY, {"path": cleaned_path})
+        product_cache[cleaned_path] = data.get("site", {}).get("route", {}).get("node", {}) or {}
+    return product_cache[cleaned_path]
+
+
+def jracenstein_code_matches(value: object, target_code: str) -> bool:
+    candidate = jracenstein_clean_identifier(value)
+    target = jracenstein_clean_identifier(target_code)
+    if not candidate or not target:
+        return False
+    if candidate == target:
+        return True
+    if target.startswith("0"):
+        stripped_target = jracenstein_stripped_numeric_code(target)
+        return bool(stripped_target and jracenstein_stripped_numeric_code(candidate) == stripped_target)
+    return False
+
+
+def jracenstein_code_match_rank(kind: str, field: str) -> int:
+    field_rank = {"mpn": 4, "sku": 3, "gtin": 2, "upc": 1}.get(field, 0)
+    return (10 if kind == "variant" else 0) + field_rank
+
+
+def build_jracenstein_exact_candidates(
+    session: requests.Session,
+    token: str,
+    code: str,
+    search_cache: dict[str, list[dict[str, object]]],
+    product_cache: dict[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    cleaned_code = jracenstein_clean_identifier(code)
+    if not cleaned_code:
+        return []
+
+    search_terms = [cleaned_code]
+    stripped_code = jracenstein_stripped_numeric_code(cleaned_code)
+    if cleaned_code.startswith("0") and stripped_code and stripped_code not in search_terms:
+        search_terms.append(stripped_code)
+
+    candidates: list[dict[str, object]] = []
+    seen_paths: set[str] = set()
+
+    for term in search_terms:
+        for result in search_jracenstein_products(session, token, term, search_cache):
+            product_path = clean_text(result.get("path", ""))
+            if not product_path or product_path in seen_paths:
+                continue
+            seen_paths.add(product_path)
+            product = fetch_jracenstein_product_data(session, token, product_path, product_cache)
+            if product.get("__typename") != "Product":
+                continue
+
+            product_name = clean_text(product.get("name", ""))
+            product_url = f"{JRACENSTEIN_BASE_URL}{product_path}"
+            description_text = trim_words(strip_html_to_text(product.get("description", "")), 1000)
+            if len(description_text) < 40:
+                description_text = ""
+
+            exact_matches: list[dict[str, object]] = []
+            for field in ("sku", "upc", "gtin", "mpn"):
+                if jracenstein_code_matches(product.get(field), cleaned_code):
+                    exact_matches.append(
+                        {
+                            "product_name": product_name,
+                            "product_path": product_path,
+                            "product_url": product_url,
+                            "product_description": description_text,
+                            "product_sku": jracenstein_clean_identifier(product.get("sku")),
+                            "product_upc": jracenstein_clean_identifier(product.get("upc")),
+                            "product_gtin": jracenstein_clean_identifier(product.get("gtin")),
+                            "product_mpn": jracenstein_clean_identifier(product.get("mpn")),
+                            "product_weight_lb": measurement_to_lb(product.get("weight")),
+                            "variant_labels": [],
+                            "variant_sku": "",
+                            "variant_upc": "",
+                            "variant_gtin": "",
+                            "variant_mpn": "",
+                            "variant_weight_lb": None,
+                            "matched_kind": "product",
+                            "matched_field": field,
+                            "matched_value": jracenstein_clean_identifier(product.get(field)),
+                        }
+                    )
+
+            variant_edges = product.get("variants", {}).get("edges", [])
+            for variant_edge in variant_edges:
+                variant = variant_edge.get("node", {}) if isinstance(variant_edge, dict) else {}
+                for field in ("sku", "upc", "gtin", "mpn"):
+                    if not jracenstein_code_matches(variant.get(field), cleaned_code):
+                        continue
+                    exact_matches.append(
+                        {
+                            "product_name": product_name,
+                            "product_path": product_path,
+                            "product_url": product_url,
+                            "product_description": description_text,
+                            "product_sku": jracenstein_clean_identifier(product.get("sku")),
+                            "product_upc": jracenstein_clean_identifier(product.get("upc")),
+                            "product_gtin": jracenstein_clean_identifier(product.get("gtin")),
+                            "product_mpn": jracenstein_clean_identifier(product.get("mpn")),
+                            "product_weight_lb": measurement_to_lb(product.get("weight")),
+                            "variant_labels": jracenstein_variant_labels(variant),
+                            "variant_sku": jracenstein_clean_identifier(variant.get("sku")),
+                            "variant_upc": jracenstein_clean_identifier(variant.get("upc")),
+                            "variant_gtin": jracenstein_clean_identifier(variant.get("gtin")),
+                            "variant_mpn": jracenstein_clean_identifier(variant.get("mpn")),
+                            "variant_weight_lb": measurement_to_lb(variant.get("weight")),
+                            "matched_kind": "variant",
+                            "matched_field": field,
+                            "matched_value": jracenstein_clean_identifier(variant.get(field)),
+                        }
+                    )
+
+            if not exact_matches:
+                continue
+
+            candidates.append(
+                max(
+                    exact_matches,
+                    key=lambda match: jracenstein_code_match_rank(match["matched_kind"], match["matched_field"]),
+                )
+            )
+
+        if candidates:
+            break
+
+    return candidates
+
+
+def jracenstein_candidate_name(item: SourceItem, candidate: dict[str, object]) -> str:
+    base = clean_text(candidate.get("product_name", ""))
+    for label in candidate.get("variant_labels", []):
+        cleaned_label = clean_text(label)
+        if cleaned_label and normalize_name(cleaned_label) not in normalize_name(base):
+            base = clean_text(f"{base} {cleaned_label}")
+    case_suffix = extract_case_suffix_from_name(item.item_name)
+    if case_suffix and normalize_name(case_suffix) not in normalize_name(base):
+        base = clean_text(f"{base} {case_suffix}")
+    return base
+
+
+def jracenstein_candidate_gtin(candidate: dict[str, object]) -> str:
+    for value in (
+        candidate.get("variant_gtin", ""),
+        candidate.get("variant_upc", ""),
+        candidate.get("product_gtin", ""),
+        candidate.get("product_upc", ""),
+    ):
+        gtin = valid_gtin(value)
+        if gtin:
+            return gtin
+    return ""
+
+
+def jracenstein_candidate_weight(candidate: dict[str, object]) -> Decimal | None:
+    return candidate.get("variant_weight_lb") or candidate.get("product_weight_lb")
+
+
+def build_jracenstein_permalink(item: SourceItem, candidate: dict[str, object]) -> str:
+    base = path_slug_from_url(candidate.get("product_url", ""))
+    if not base:
+        base = slugify(jracenstein_candidate_name(item, candidate))
+    combined = base
+    for label in candidate.get("variant_labels", []):
+        label_slug = slugify(label)
+        if label_slug and normalize_name(label_slug) not in normalize_name(combined):
+            combined = f"{combined}-{label_slug}"
+    case_pack = extract_case_pack(item.description) or extract_case_suffix_from_name(item.item_name)
+    case_slug = slugify(case_pack)
+    if case_slug:
+        case_segment = case_slug if case_slug.startswith("case-") else f"case-{case_slug}"
+        if normalize_name(case_segment) not in normalize_name(combined):
+            combined = f"{combined}-{case_segment}"
+    return clean_text(combined)
+
+
+def filter_jracenstein_candidates_by_keywords(
+    item: SourceItem,
+    candidates: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    filtered = candidates
+    item_upper = clean_text(item.item_name).upper()
+    for keyword in JRACENSTEIN_DISTINCTIVE_KEYWORDS:
+        if keyword not in item_upper:
+            continue
+        keyword_matches = [
+            candidate
+            for candidate in filtered
+            if keyword in jracenstein_candidate_name(item, candidate).upper()
+        ]
+        if len(keyword_matches) == 1:
+            return keyword_matches
+        if keyword_matches:
+            filtered = keyword_matches
+    return filtered
+
+
+def jracenstein_match_score(item: SourceItem, candidate: dict[str, object]) -> float:
+    item_key = jracenstein_similarity_key(item.item_name)
+    candidate_name = jracenstein_candidate_name(item, candidate)
+    candidate_key = jracenstein_similarity_key(candidate_name)
+    score = SequenceMatcher(None, item_key, candidate_key).ratio()
+
+    item_sizes = extract_size_hints(item.item_name)
+    candidate_sizes = extract_size_hints(candidate_name)
+    if item_sizes and candidate_sizes:
+        if item_sizes & candidate_sizes:
+            score += 0.20
+        else:
+            score -= 0.25
+
+    for keyword, bonus in (
+        ("KIT", 0.06),
+        ("PROPLUS", 0.08),
+        ("BRUSH", 0.05),
+        ("DUSTER", 0.05),
+        ("SCRAPER", 0.05),
+        ("CHANNEL", 0.05),
+        ("SQUEEGEE", 0.05),
+        ("HANDLE", 0.04),
+        ("POLE", 0.04),
+    ):
+        if keyword in item_key and keyword in candidate_key:
+            score += bonus
+
+    return score
+
+
+def resolve_jracenstein_candidate(
+    item: SourceItem,
+    candidates: list[dict[str, object]],
+) -> dict[str, object] | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    gtins = {jracenstein_candidate_gtin(candidate) for candidate in candidates if jracenstein_candidate_gtin(candidate)}
+    filtered = candidates
+    item_sizes = extract_size_hints(item.item_name)
+    if item_sizes:
+        size_matches = [
+            candidate
+            for candidate in candidates
+            if extract_size_hints(jracenstein_candidate_name(item, candidate)) & item_sizes
+        ]
+        if len(size_matches) == 1:
+            return size_matches[0]
+        if size_matches:
+            filtered = size_matches
+
+    filtered = filter_jracenstein_candidates_by_keywords(item, filtered)
+    scored = sorted(
+        ((jracenstein_match_score(item, candidate), candidate) for candidate in filtered),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+
+    if not scored:
+        return None
+    if len(gtins) == 1 and gtins:
+        return scored[0][1]
+    if len(scored) == 1:
+        return scored[0][1]
+    if scored[0][0] >= 0.56 and scored[0][0] - scored[1][0] >= 0.08:
+        return scored[0][1]
+    return None
 
 
 TRIDENT_URL_ALIASES = {
@@ -1221,51 +1679,125 @@ def apply_direct_vendor_enrichments(
     detail_counts: Counter[str] = Counter()
     notes: list[str] = []
 
-    # JRacenstein exact SKU matches from catalog cards.
+    # JRacenstein exact product/variant code matches via the live Storefront GraphQL catalog.
     try:
-        catalog = fetch_jracenstein_catalog_cards()
+        session = requests.Session()
+        token = fetch_jracenstein_storefront_token(session)
+        search_cache: dict[str, list[dict[str, object]]] = {}
+        product_cache: dict[str, dict[str, object]] = {}
+        unresolved_candidates = 0
+
         for item in [candidate for candidate in items if candidate.vendor == "JRacenstein"]:
-            sku_key = normalize_sku(item.vendor_code or item.sku)
-            if sku_key not in catalog:
+            vendor_code = clean_text(item.vendor_code or item.sku)
+            candidates = build_jracenstein_exact_candidates(session, token, vendor_code, search_cache, product_cache)
+            resolved = resolve_jracenstein_candidate(item, candidates)
+            if resolved is None:
+                if len(candidates) > 1:
+                    unresolved_candidates += 1
                 continue
-            entry = catalog[sku_key]
-            title = clean_text(entry["title"])
-            url = entry["url"]
-            if title and title != product_display_name(item):
-                item.customer_facing_name_override = title
+
+            product_url = clean_text(resolved.get("product_url", ""))
+            candidate_name = jracenstein_candidate_name(item, resolved)
+            match_detail = (
+                f"Matched on exact {resolved['matched_kind']} {resolved['matched_field'].upper()} "
+                f"for vendor code {vendor_code}."
+            )
+
+            if candidate_name and candidate_name != product_display_name(item):
+                item.customer_facing_name_override = candidate_name
                 audit_entries.append(
                     EnrichmentAuditEntry(
-                        enrichment_type="jracenstein_catalog_match",
+                        enrichment_type="jracenstein_exact_code_match",
                         vendor=item.vendor,
                         sku=item.sku,
-                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        vendor_code=vendor_code,
                         item_name=item.item_name,
                         field="Customer-facing Name",
-                        value=title,
-                        source=url,
-                        details="Matched on exact SKU from the J.Racenstein catalog page.",
+                        value=candidate_name,
+                        source=product_url,
+                        details=match_detail,
                     )
                 )
                 detail_counts["customer_names"] += 1
-            slug = path_slug_from_url(url)
-            if is_meaningful_shopify_handle(slug):
-                item.permalink_override = slug
+
+            description_text = clean_text(resolved.get("product_description", ""))
+            if description_text and normalize_name(description_text) != normalize_name(product_description_text(item)):
+                item.description_override = description_text
                 audit_entries.append(
                     EnrichmentAuditEntry(
-                        enrichment_type="jracenstein_catalog_match",
+                        enrichment_type="jracenstein_exact_code_match",
                         vendor=item.vendor,
                         sku=item.sku,
-                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        vendor_code=vendor_code,
+                        item_name=item.item_name,
+                        field="Description",
+                        value=trim_words(description_text, 120),
+                        source=product_url,
+                        details="Pulled from the matching JRacenstein product page description.",
+                    )
+                )
+                detail_counts["descriptions"] += 1
+
+            gtin = jracenstein_candidate_gtin(resolved)
+            if gtin and gtin != valid_gtin(item.gtin):
+                item.gtin = gtin
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="jracenstein_exact_code_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=vendor_code,
+                        item_name=item.item_name,
+                        field="GTIN",
+                        value=gtin,
+                        source=product_url,
+                        details=match_detail,
+                    )
+                )
+                detail_counts["gtins"] += 1
+
+            weight_lb = jracenstein_candidate_weight(resolved)
+            if weight_lb is not None:
+                item.weight_lb_override = weight_lb
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="jracenstein_exact_code_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=vendor_code,
+                        item_name=item.item_name,
+                        field="Weight (lb)",
+                        value=format_weight(weight_lb),
+                        source=product_url,
+                        details="Pulled from the matching JRacenstein product or variant shipping weight.",
+                    )
+                )
+                detail_counts["weights"] += 1
+
+            permalink = build_jracenstein_permalink(item, resolved)
+            if permalink:
+                item.permalink_override = permalink
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type="jracenstein_exact_code_match",
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=vendor_code,
                         item_name=item.item_name,
                         field="Permalink",
-                        value=slug,
-                        source=url,
-                        details="Using the J.Racenstein product URL slug as the preferred permalink.",
+                        value=permalink,
+                        source=product_url,
+                        details="Built from the JRacenstein product path plus the matched variant labels when needed.",
                     )
                 )
                 detail_counts["permalinks"] += 1
+
             match_counts["JRacenstein"] += 1
-        notes.append(f"JRacenstein website enrichment matched {match_counts['JRacenstein']} catalog rows.")
+
+        note = f"JRacenstein website enrichment matched {match_counts['JRacenstein']} exact code rows."
+        if unresolved_candidates:
+            note += f" Left {unresolved_candidates} ambiguous exact-code candidates unchanged."
+        notes.append(note)
     except Exception as exc:
         notes.append(f"JRacenstein website enrichment skipped: {exc}")
 
@@ -2015,6 +2547,7 @@ def summarize(
         f"SEO titles generated: {seo_titles_generated}",
         f"Permalinks generated: {permalinks_generated}",
         f"Vendor website row matches applied: {sum(website_match_counts.values())}",
+        f"Vendor website GTINs applied: {website_detail_counts['gtins']}",
         f"Vendor website descriptions applied: {website_detail_counts['descriptions']}",
         f"Vendor website weights applied: {website_detail_counts['weights']}",
         "Counts by vendor:",
@@ -2032,7 +2565,7 @@ def summarize(
     lines.append("  - GTIN values only populate when they pass a checksum check or come from a verified manual override.")
     lines.append("  - SEO fields and permalinks are generated automatically from the cleaned catalog data.")
     lines.append("  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.")
-    lines.append("  - JRacenstein matches use exact vendor SKUs from the live catalog cards. Trident and EacoChem matches use exact base product names plus the existing pack suffix.")
+    lines.append("  - JRacenstein matches use exact live product or variant code matches from the Storefront catalog, with size/name checks only to break ties. Trident and EacoChem matches use exact base product names plus the existing pack suffix.")
     for note in website_notes:
         lines.append(f"  - {note}")
     lines.append("  - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.")
