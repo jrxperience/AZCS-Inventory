@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
@@ -441,9 +441,9 @@ def parse_trident(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
 
                 base_name, notes = strip_product_markers(name_cell)
                 item_name = f"{base_name} - {current_pack}" if current_pack else base_name
-                cost = dealer_prices[0]
+                cost = max(dealer_prices)
                 if len(dealer_prices) > 1:
-                    notes.append("Default Unit Cost uses the first dealer tier shown in the source sheet.")
+                    notes.append("Default Unit Cost uses the higher dealer tier shown in the source sheet.")
 
                 items.append(
                     SourceItem(
@@ -476,7 +476,10 @@ def append_eaco_item(
 ) -> None:
     if not prices:
         return
-    cost = prices[1] if len(prices) >= 2 else prices[0]
+    if len(prices) >= 3:
+        cost = max(prices[:2])
+    else:
+        cost = max(prices)
     price = prices[2] if len(prices) >= 3 else None
     item_name = f"{base_name} - {size_label}"
     items.append(
@@ -644,31 +647,103 @@ def dedupe_same_source(items: list[SourceItem]) -> tuple[list[SourceItem], int]:
     return kept, skipped
 
 
-def add_overlap_reason(reasons: dict[int, list[str]], index: int, label: str, overlap_with: str) -> None:
-    detail = f"{label}: {overlap_with}"
-    if detail not in reasons[index]:
-        reasons[index].append(detail)
+def item_priority_key(item: SourceItem) -> tuple[int, Decimal, int, Decimal, int, int]:
+    return (
+        1 if item.default_unit_cost is not None else 0,
+        item.default_unit_cost or Decimal("-1"),
+        1 if item.price is not None else 0,
+        item.price or Decimal("-1"),
+        1 if valid_gtin(item.gtin) else 0,
+        1 if normalize_sku(item.sku) else 0,
+    )
 
 
-def detect_overlaps(items: list[SourceItem]) -> tuple[set[int], dict[int, list[str]]]:
-    reasons: dict[int, list[str]] = defaultdict(list)
-    excluded: set[int] = set()
+def merge_group_items(group_items: list[SourceItem]) -> SourceItem:
+    best_item = max(group_items, key=item_priority_key)
+    merged_item = replace(best_item, notes=list(best_item.notes))
 
-    def process_groups(groups: dict[str, list[int]], label: str) -> None:
-        for key, indexes in groups.items():
+    available_costs = [item.default_unit_cost for item in group_items if item.default_unit_cost is not None]
+    available_prices = [item.price for item in group_items if item.price is not None]
+    highest_cost = max(available_costs) if available_costs else None
+    prices_at_highest_cost = [
+        item.price
+        for item in group_items
+        if item.default_unit_cost == highest_cost and item.price is not None
+    ]
+
+    merged_item.default_unit_cost = highest_cost
+    if prices_at_highest_cost:
+        merged_item.price = max(prices_at_highest_cost)
+    elif merged_item.price is None and available_prices:
+        merged_item.price = max(available_prices)
+
+    if not valid_gtin(merged_item.gtin):
+        merged_item.gtin = next((item.gtin for item in group_items if valid_gtin(item.gtin)), "")
+    if not normalize_sku(merged_item.sku):
+        merged_item.sku = next((item.sku for item in group_items if normalize_sku(item.sku)), "")
+    if not clean_text(merged_item.vendor_code):
+        merged_item.vendor_code = next((item.vendor_code for item in group_items if clean_text(item.vendor_code)), merged_item.sku)
+    if not clean_text(merged_item.description):
+        merged_item.description = max((item.description for item in group_items), key=len, default="")
+    if not clean_text(merged_item.category):
+        merged_item.category = next((item.category for item in group_items if clean_text(item.category)), "")
+    if not clean_text(merged_item.reporting_category):
+        merged_item.reporting_category = next((item.reporting_category for item in group_items if clean_text(item.reporting_category)), "")
+
+    return merged_item
+
+
+def extract_case_pack(description: str) -> str:
+    match = re.search(r"Case pack:\s*([^|]+)", description)
+    return clean_text(match.group(1)) if match else ""
+
+
+def disambiguation_label(item: SourceItem) -> str:
+    case_pack = extract_case_pack(item.description)
+    if case_pack:
+        return f"Case {case_pack}"
+    gtin = valid_gtin(item.gtin)
+    if gtin:
+        return f"GTIN {gtin}"
+    sku = clean_text(item.sku)
+    if sku:
+        return f"SKU {sku}"
+    return clean_text(item.source_file)
+
+
+def merge_duplicate_items(items: list[SourceItem]) -> tuple[list[SourceItem], list[ReviewIssue], int]:
+    parent = list(range(len(items)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    def union_groups(groups: dict[str, list[int]]) -> None:
+        for indexes in groups.values():
             unique_indexes = sorted(set(indexes))
             if len(unique_indexes) <= 1:
                 continue
-            for index in unique_indexes:
-                others = [
-                    f"{items[other].vendor} | {items[other].source_file} | {items[other].item_name} | SKU={items[other].sku or '[generated]'}"
-                    for other in unique_indexes
-                    if other != index
-                ]
-                if not others:
-                    continue
-                excluded.add(index)
-                add_overlap_reason(reasons, index, f"{label} '{key}'", " || ".join(others))
+            first = unique_indexes[0]
+            for index in unique_indexes[1:]:
+                union(first, index)
+
+    def union_name_groups(groups: dict[str, list[int]]) -> None:
+        for indexes in groups.values():
+            unique_indexes = sorted(set(indexes))
+            if len(unique_indexes) <= 1:
+                continue
+            for left_pos, left in enumerate(unique_indexes):
+                for right in unique_indexes[left_pos + 1 :]:
+                    if items[left].vendor != items[right].vendor:
+                        union(left, right)
 
     sku_groups: dict[str, list[int]] = defaultdict(list)
     gtin_groups: dict[str, list[int]] = defaultdict(list)
@@ -685,19 +760,146 @@ def detect_overlaps(items: list[SourceItem]) -> tuple[set[int], dict[int, list[s
         if name_key and len(name_key) >= 8:
             name_groups[name_key].append(index)
 
-    process_groups(sku_groups, "Exact SKU overlap")
-    process_groups(gtin_groups, "Exact GTIN overlap")
-    process_groups(name_groups, "Exact item-name overlap")
-    return excluded, reasons
+    union_groups(sku_groups)
+    union_groups(gtin_groups)
+    union_name_groups(name_groups)
+
+    grouped_indexes: dict[int, list[int]] = defaultdict(list)
+    for index in range(len(items)):
+        grouped_indexes[find(index)].append(index)
+
+    merged_items: list[SourceItem] = []
+    merge_issues: list[ReviewIssue] = []
+    merged_groups = 0
+
+    for root in sorted(grouped_indexes):
+        indexes = grouped_indexes[root]
+        group_items = [items[index] for index in indexes]
+        if len(group_items) == 1:
+            merged_items.append(group_items[0])
+            continue
+
+        merged_groups += 1
+        merged_item = merge_group_items(group_items)
+        highest_cost = merged_item.default_unit_cost
+
+        reason_parts: list[str] = []
+        gtin_matches = {valid_gtin(item.gtin) for item in group_items if valid_gtin(item.gtin)}
+        name_matches = {normalize_name(item.item_name) for item in group_items if normalize_name(item.item_name)}
+        if len(gtin_matches) == 1 and next(iter(gtin_matches), ""):
+            reason_parts.append("exact GTIN match")
+        if len(name_matches) == 1 and next(iter(name_matches), ""):
+            reason_parts.append("exact item-name match")
+        vendor_sku_pairs = {(item.vendor, normalize_sku(item.sku)) for item in group_items if normalize_sku(item.sku)}
+        if len(vendor_sku_pairs) < len([item for item in group_items if normalize_sku(item.sku)]):
+            reason_parts.append("same-vendor SKU duplicate")
+
+        source_list = "; ".join(
+            f"{item.vendor} | {item.source_file} | SKU={item.sku or '[generated]'} | Cost={format_money(item.default_unit_cost)}"
+            for item in sorted(group_items, key=lambda item: (item.vendor, item.source_file, item.sku, item.item_name))
+        )
+        reason_text = ", ".join(reason_parts) if reason_parts else "duplicate item match"
+        merge_issues.append(
+            ReviewIssue(
+                issue_type="merged_duplicate",
+                vendor=merged_item.vendor,
+                source_file=merged_item.source_file,
+                item_name=merged_item.item_name,
+                sku=merged_item.sku,
+                gtin=merged_item.gtin,
+                category=merged_item.category,
+                default_unit_cost=format_money(merged_item.default_unit_cost),
+                price=format_money(merged_item.price),
+                details=f"Merged {len(group_items)} source rows by {reason_text}. Kept the highest cost option {format_money(highest_cost)}. Sources: {source_list}",
+            )
+        )
+        merged_items.append(merged_item)
+
+    return merged_items, merge_issues, merged_groups
 
 
-def generate_unique_skus(items: list[SourceItem], excluded_indexes: set[int]) -> int:
+def resolve_same_vendor_name_collisions(items: list[SourceItem]) -> tuple[list[SourceItem], list[ReviewIssue], int, int]:
+    groups: dict[tuple[str, str], list[SourceItem]] = defaultdict(list)
+    for item in items:
+        groups[(item.vendor, normalize_name(item.item_name))].append(item)
+
+    resolved_items: list[SourceItem] = []
+    review_issues: list[ReviewIssue] = []
+    merged_groups = 0
+    renamed_rows = 0
+
+    for (vendor, name_key), group_items in groups.items():
+        if not name_key or len(group_items) == 1:
+            resolved_items.extend(group_items)
+            continue
+
+        costs = [item.default_unit_cost for item in group_items if item.default_unit_cost is not None]
+        safe_to_merge = False
+        if costs:
+            min_cost = min(costs)
+            max_cost = max(costs)
+            safe_to_merge = bool(min_cost) and max_cost <= min_cost * Decimal("1.5")
+        gtins = {valid_gtin(item.gtin) for item in group_items if valid_gtin(item.gtin)}
+        if len(gtins) == 1 and next(iter(gtins), ""):
+            safe_to_merge = True
+
+        if safe_to_merge:
+            merged_groups += 1
+            merged_item = merge_group_items(group_items)
+            resolved_items.append(merged_item)
+            review_issues.append(
+                ReviewIssue(
+                    issue_type="merged_same_vendor_duplicate",
+                    vendor=merged_item.vendor,
+                    source_file=merged_item.source_file,
+                    item_name=merged_item.item_name,
+                    sku=merged_item.sku,
+                    gtin=merged_item.gtin,
+                    category=merged_item.category,
+                    default_unit_cost=format_money(merged_item.default_unit_cost),
+                    price=format_money(merged_item.price),
+                    details="Merged same-vendor duplicate names and kept the higher cost option. Sources: "
+                    + "; ".join(
+                        f"SKU={item.sku or '[generated]'} | Cost={format_money(item.default_unit_cost)}"
+                        for item in sorted(group_items, key=lambda item: (item.sku, item.item_name))
+                    ),
+                )
+            )
+            continue
+
+        used_labels: set[str] = set()
+        for item in group_items:
+            renamed_item = replace(item, notes=list(item.notes))
+            label = disambiguation_label(renamed_item)
+            candidate = label
+            suffix = 2
+            while candidate in used_labels:
+                candidate = f"{label} #{suffix}"
+                suffix += 1
+            used_labels.add(candidate)
+            renamed_item.item_name = f"{clean_text(renamed_item.item_name)} [{candidate}]"
+            resolved_items.append(renamed_item)
+            renamed_rows += 1
+
+        review_issues.append(
+            ReviewIssue(
+                issue_type="renamed_same_vendor_duplicate",
+                vendor=vendor,
+                source_file=group_items[0].source_file,
+                item_name=group_items[0].item_name,
+                category=group_items[0].category,
+                details="Kept separate items with the same vendor/name by renaming them using case pack, GTIN, or SKU.",
+            )
+        )
+
+    return resolved_items, review_issues, merged_groups, renamed_rows
+
+
+def generate_unique_skus(items: list[SourceItem]) -> int:
     used: set[str] = set()
     updated = 0
 
-    for index, item in enumerate(items):
-        if index in excluded_indexes:
-            continue
+    for item in items:
         sku = clean_code(item.sku)
         if sku and sku not in used:
             item.sku = sku
@@ -761,32 +963,10 @@ def write_master_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str
         writer.writerows(rows)
 
 
-def build_review_rows(
-    items: list[SourceItem],
-    excluded_indexes: set[int],
-    overlap_reasons: dict[int, list[str]],
-    parser_issues: list[ReviewIssue],
-) -> list[dict[str, str]]:
+def build_review_rows(review_issues: list[ReviewIssue]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
 
-    for index in sorted(excluded_indexes):
-        item = items[index]
-        rows.append(
-            {
-                "issue_type": "overlap_review",
-                "vendor": item.vendor,
-                "source_file": item.source_file,
-                "item_name": clean_text(item.item_name),
-                "sku": item.sku,
-                "gtin": valid_gtin(item.gtin),
-                "category": clean_text(item.category),
-                "default_unit_cost": format_money(item.default_unit_cost),
-                "price": format_money(item.price),
-                "details": " | ".join(overlap_reasons.get(index, [])),
-            }
-        )
-
-    for issue in parser_issues:
+    for issue in review_issues:
         rows.append(
             {
                 "issue_type": issue.issue_type,
@@ -831,6 +1011,8 @@ def summarize(
     included_rows: int,
     generated_skus: int,
     skipped_duplicates: int,
+    merged_groups: int,
+    renamed_rows: int,
 ) -> str:
     lines = [
         f"Square master inventory: {MASTER_OUT_PATH}",
@@ -838,6 +1020,8 @@ def summarize(
         f"Source items normalized: {total_source_items}",
         f"Rows included in Square import: {included_rows}",
         f"Rows sent to review: {len(review_rows)}",
+        f"Duplicate item groups merged into one inventory row: {merged_groups}",
+        f"Rows renamed to avoid duplicate item names: {renamed_rows}",
         f"Generated replacement SKUs: {generated_skus}",
         f"Duplicate rows skipped inside the same source file: {skipped_duplicates}",
         "Counts by vendor:",
@@ -875,17 +1059,13 @@ def main() -> None:
         parser_issues.extend(issues)
 
     source_items, skipped_duplicates = dedupe_same_source(source_items)
+    source_items, merge_issues, merged_groups = merge_duplicate_items(source_items)
+    source_items, rename_issues, same_vendor_merged_groups, renamed_rows = resolve_same_vendor_name_collisions(source_items)
     counts_by_vendor = Counter(item.vendor for item in source_items)
+    generated_skus = generate_unique_skus(source_items)
 
-    excluded_indexes, overlap_reasons = detect_overlaps(source_items)
-    generated_skus = generate_unique_skus(source_items, excluded_indexes)
-
-    master_rows = [
-        build_square_row(item, square_headers)
-        for index, item in enumerate(source_items)
-        if index not in excluded_indexes
-    ]
-    review_rows = build_review_rows(source_items, excluded_indexes, overlap_reasons, parser_issues)
+    master_rows = [build_square_row(item, square_headers) for item in source_items]
+    review_rows = build_review_rows(merge_issues + rename_issues + parser_issues)
 
     write_master_csv(MASTER_OUT_PATH, square_headers, master_rows)
     write_review_csv(REVIEW_OUT_PATH, review_rows)
@@ -897,6 +1077,8 @@ def main() -> None:
         included_rows=len(master_rows),
         generated_skus=generated_skus,
         skipped_duplicates=skipped_duplicates,
+        merged_groups=merged_groups + same_vendor_merged_groups,
+        renamed_rows=renamed_rows,
     )
     SUMMARY_OUT_PATH.write_text(summary, encoding="utf-8")
     print(summary)
