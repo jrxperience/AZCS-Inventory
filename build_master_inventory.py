@@ -13,8 +13,13 @@ from pypdf import PdfReader
 
 
 BASE_DIR = Path(__file__).resolve().parent
-TEMPLATE_PATH = BASE_DIR / "Square Import Template.csv"
-OUTPUT_DIR = BASE_DIR
+INPUT_DIR = BASE_DIR / "inputs"
+PRICE_LIST_DIR = INPUT_DIR / "price_lists"
+TEMPLATE_DIR = BASE_DIR / "templates"
+OUTPUT_DIR = BASE_DIR / "outputs"
+
+TEMPLATE_PATH = TEMPLATE_DIR / "Square Import Template.csv"
+LEGACY_TEMPLATE_PATH = BASE_DIR / "Square Import Template.csv"
 
 MASTER_OUT_PATH = OUTPUT_DIR / "square_master_inventory.csv"
 REVIEW_OUT_PATH = OUTPUT_DIR / "square_master_inventory_overlap_review.csv"
@@ -167,6 +172,31 @@ def read_csv_any(path: Path) -> list[list[str]]:
     if last_error:
         raise last_error
     raise RuntimeError(f"Could not read {path}")
+
+
+def resolve_template_path() -> Path:
+    if TEMPLATE_PATH.exists():
+        return TEMPLATE_PATH
+    if LEGACY_TEMPLATE_PATH.exists():
+        return LEGACY_TEMPLATE_PATH
+    raise FileNotFoundError("Square Import Template.csv was not found in templates/ or the repo root.")
+
+
+def resolve_latest_source(patterns: list[str]) -> Path:
+    candidates: list[Path] = []
+    search_roots = [PRICE_LIST_DIR, BASE_DIR]
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for pattern in patterns:
+            candidates.extend(root.glob(pattern))
+    unique_candidates = sorted({path.resolve() for path in candidates if path.is_file()})
+    if not unique_candidates:
+        raise FileNotFoundError(f"No source file matched patterns: {patterns}")
+    return max(
+        unique_candidates,
+        key=lambda path: (path.stat().st_mtime, 1 if PRICE_LIST_DIR in path.parents else 0),
+    )
 
 
 def load_square_headers(path: Path) -> list[str]:
@@ -1004,6 +1034,18 @@ def write_review_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+SOURCE_DEFINITIONS = [
+    (["*Barrens*Pricelist*.csv"], parse_barrens),
+    (["*MPWSR*Price List*.csv"], parse_mpwsr),
+    (["*Dealer Pricing*.xlsx"], parse_inseco),
+    (["*Price List - Distributors*.xlsx"], parse_jracenstein),
+    (["*BE*PriceList*.pdf"], parse_be),
+    (["*Trident*Dealer Price Sheet*.pdf"], parse_trident),
+    (["*Distributor New Construction*Pricing.pdf"], parse_eaco_new_construction),
+    (["*Distr Fleet Distributor Fleet Distributor*.pdf"], parse_eaco_fleet),
+]
+
+
 def summarize(
     counts_by_vendor: Counter[str],
     total_source_items: int,
@@ -1037,23 +1079,14 @@ def summarize(
 
 
 def main() -> None:
-    square_headers = load_square_headers(TEMPLATE_PATH)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    square_headers = load_square_headers(resolve_template_path())
 
     source_items: list[SourceItem] = []
     parser_issues: list[ReviewIssue] = []
 
-    source_parsers = [
-        (BASE_DIR / "Barrens Pricelist 2025.csv", parse_barrens),
-        (BASE_DIR / "MPWSR Price List May '25.csv", parse_mpwsr),
-        (BASE_DIR / "2025 Dealer Pricing .xlsx", parse_inseco),
-        (BASE_DIR / "2026 Price List - Distributors.xlsx", parse_jracenstein),
-        (BASE_DIR / "BE PriceList 2025- USD.pdf", parse_be),
-        (BASE_DIR / "Trident Dealer Price Sheet 2025.pdf", parse_trident),
-        (BASE_DIR / "2025 Distributor New Construction and Restoration Products Pricing.pdf", parse_eaco_new_construction),
-        (BASE_DIR / "2025 Distr Fleet Distributor Fleet Distributor.pdf", parse_eaco_fleet),
-    ]
-
-    for path, parser in source_parsers:
+    for patterns, parser in SOURCE_DEFINITIONS:
+        path = resolve_latest_source(patterns)
         items, issues = parser(path)
         source_items.extend(items)
         parser_issues.extend(issues)

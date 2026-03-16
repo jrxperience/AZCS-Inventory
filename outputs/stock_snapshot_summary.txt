@@ -1,0 +1,17 @@
+Master inventory source: C:\Codex\AZCS Inventory\outputs\square_master_inventory.csv
+Stock snapshot: C:\Codex\AZCS Inventory\outputs\current_stock_snapshot.csv
+Square quantity update file: C:\Codex\AZCS Inventory\outputs\square_inventory_quantity_update.csv
+Pricing snapshot: C:\Codex\AZCS Inventory\outputs\current_pricing_snapshot.csv
+Square price update file: C:\Codex\AZCS Inventory\outputs\square_catalog_price_update.csv
+Issues file: C:\Codex\AZCS Inventory\outputs\stock_transaction_issues.csv
+Delivery files processed: 0
+Adjustment files processed: 0
+Price update files processed: 0
+SKUs with any stock activity: 0
+SKUs with price overrides: 0
+Total quantity received: 0
+Total quantity adjusted: 0
+Square quantity column updated: New Quantity AZ Cleaning Supplies
+Square enabled column updated: Enabled AZ Cleaning Supplies
+Square price rows changed: 0
+Issue rows: 0
