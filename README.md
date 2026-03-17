@@ -9,6 +9,7 @@ This repo now supports seven repeatable jobs:
 5. Generate strategic selling-price recommendations for the full catalog.
 6. Match Square sales history back to the catalog for pricing and review.
 7. Build an after-hours receiving import from a fresh Square export plus the current delivery batch.
+8. Run all of the main workflows from a local dashboard with cleaner latest/run folders.
 
 ## Folder layout
 
@@ -34,6 +35,29 @@ This repo now supports seven repeatable jobs:
   Holds the Square import template and transaction templates.
 - `outputs/`
   Generated inventory and stock files land here.
+- `latest/`
+  The dashboard copies the newest successful outputs for each workflow here so you have a clean place to open the current files.
+- `runs/`
+  The dashboard archives each successful workflow run here under a timestamped folder.
+
+## Run the dashboard
+
+If you want one place to manage uploads, runs, and output files, launch:
+
+```powershell
+python inventory_dashboard.py
+```
+
+Or on Windows, double-click:
+
+- [`launch_inventory_dashboard.bat`](/C:/Codex/AZCS%20Inventory/launch_inventory_dashboard.bat)
+
+What the dashboard gives you:
+
+- one place to copy files into the right input folders
+- one-click workflow runs for master inventory, sales match, pricing, receiving, and stock snapshots
+- a cleaner `latest/<workflow>/` area for the newest successful files
+- timestamped `runs/<timestamp>/<workflow>/` archives for run history and logs
 
 ## Rebuild the master inventory
 
