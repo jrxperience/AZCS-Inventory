@@ -24,7 +24,11 @@ PRICE_LIST_DIR = INPUT_DIR / "price_lists"
 TEMPLATE_DIR = BASE_DIR / "templates"
 OUTPUT_DIR = BASE_DIR / "outputs"
 
+TEMPLATE_XLSX_PATH = TEMPLATE_DIR / "IMPORT TEMPLATE.xlsx"
+ALT_TEMPLATE_XLSX_PATH = TEMPLATE_DIR / "Square Import Template.xlsx"
 TEMPLATE_PATH = TEMPLATE_DIR / "Square Import Template.csv"
+LEGACY_TEMPLATE_XLSX_PATH = BASE_DIR / "IMPORT TEMPLATE.xlsx"
+ALT_LEGACY_TEMPLATE_XLSX_PATH = BASE_DIR / "Square Import Template.xlsx"
 LEGACY_TEMPLATE_PATH = BASE_DIR / "Square Import Template.csv"
 VERIFIED_ENRICHMENT_PATH = INPUT_DIR / "verified_product_enrichment.csv"
 
@@ -476,11 +480,19 @@ def read_csv_any(path: Path) -> list[list[str]]:
 
 
 def resolve_template_path() -> Path:
+    if TEMPLATE_XLSX_PATH.exists():
+        return TEMPLATE_XLSX_PATH
+    if ALT_TEMPLATE_XLSX_PATH.exists():
+        return ALT_TEMPLATE_XLSX_PATH
     if TEMPLATE_PATH.exists():
         return TEMPLATE_PATH
+    if LEGACY_TEMPLATE_XLSX_PATH.exists():
+        return LEGACY_TEMPLATE_XLSX_PATH
+    if ALT_LEGACY_TEMPLATE_XLSX_PATH.exists():
+        return ALT_LEGACY_TEMPLATE_XLSX_PATH
     if LEGACY_TEMPLATE_PATH.exists():
         return LEGACY_TEMPLATE_PATH
-    raise FileNotFoundError("Square Import Template.csv was not found in templates/ or the repo root.")
+    raise FileNotFoundError("A Square import template was not found in templates/ or the repo root.")
 
 
 def resolve_latest_source(patterns: list[str]) -> Path:
@@ -501,9 +513,23 @@ def resolve_latest_source(patterns: list[str]) -> Path:
 
 
 def load_square_headers(path: Path) -> list[str]:
+    if path.suffix.lower() == ".xlsx":
+        workbook = load_workbook(path, read_only=False, data_only=False)
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                cleaned_row = [clean_text(cell) for cell in row]
+                if not any(cleaned_row):
+                    continue
+                first_cell = cleaned_row[0]
+                if first_cell not in {"Reference Handle", "Token"}:
+                    continue
+                last_non_empty = max(index for index, value in enumerate(cleaned_row) if value)
+                return cleaned_row[: last_non_empty + 1]
+        raise ValueError(f"Could not find Square header row in {path}")
+
     rows = read_csv_any(path)
     for row in rows:
-        if row and clean_text(row[0]) == "Token":
+        if row and clean_text(row[0]) in {"Reference Handle", "Token"}:
             return [clean_text(cell) for cell in row]
     raise ValueError(f"Could not find Square header row in {path}")
 
@@ -2716,36 +2742,50 @@ def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     description_text = product_description_text(item)
     seo_title = build_seo_title(item)
     seo_description = build_seo_description(item, seo_title)
-    row["Token"] = ""
-    row["Item Name"] = clean_text(item.item_name)
-    row["Customer-facing Name"] = customer_facing_name
-    row["Variation Name"] = "Regular"
-    row["SKU"] = item.sku
-    row["Description"] = description_text
-    row["Categories"] = clean_text(item.category)
-    row["Reporting Category"] = clean_text(item.reporting_category)
-    row["SEO Title"] = seo_title
-    row["SEO Description"] = seo_description
-    row["GTIN"] = valid_gtin(item.gtin)
-    row["Square Online Item Visibility"] = "Hidden"
-    row["Item Type"] = "Physical"
-    row["Weight (lb)"] = format_weight(item.weight_lb_override)
-    row["Social Media Link Title"] = seo_title
-    row["Social Media Link Description"] = seo_description
-    row["Shipping Enabled"] = "N"
-    row["Self-serve Ordering Enabled"] = "N"
-    row["Delivery Enabled"] = "N"
-    row["Pickup Enabled"] = "N"
-    row["Price"] = format_money(item.price)
-    row["Archived"] = "N"
-    row["Sellable"] = "Y" if item.price is not None else "N"
-    row["Contains Alcohol"] = "N"
-    row["Stockable"] = "Y"
-    row["Skip Detail Screen in POS"] = "N"
-    row["Default Unit Cost"] = format_money(item.default_unit_cost)
-    row["Default Vendor Name"] = item.vendor
-    row["Default Vendor Code"] = clean_text(item.vendor_code or item.sku)
-    row["Permalink"] = clean_text(item.permalink_override)
+    location_price = format_money(item.price)
+
+    def assign(field: str, value: str) -> None:
+        if field in row:
+            row[field] = value
+
+    assign("Reference Handle", "")
+    assign("Token", "")
+    assign("Item Name", clean_text(item.item_name))
+    assign("Customer-facing Name", customer_facing_name)
+    assign("Variation Name", "Regular")
+    assign("SKU", item.sku)
+    assign("Description", description_text)
+    assign("Categories", clean_text(item.category))
+    assign("Reporting Category", clean_text(item.reporting_category))
+    assign("SEO Title", seo_title)
+    assign("SEO Description", seo_description)
+    assign("GTIN", valid_gtin(item.gtin))
+    assign("Square Online Item Visibility", "Hidden")
+    assign("Item Type", "Physical")
+    assign("Weight (lb)", format_weight(item.weight_lb_override))
+    assign("Social Media Link Title", seo_title)
+    assign("Social Media Link Description", seo_description)
+    assign("Shipping Enabled", "N")
+    assign("Self-serve Ordering Enabled", "N")
+    assign("Delivery Enabled", "N")
+    assign("Pickup Enabled", "N")
+    assign("Price", location_price)
+    assign("Online Sale Price", "")
+    assign("Archived", "N")
+    assign("Sellable", "Y" if item.price is not None else "N")
+    assign("Contains Alcohol", "N")
+    assign("Stockable", "Y")
+    assign("Skip Detail Screen in POS", "N")
+    assign("Default Unit Cost", format_money(item.default_unit_cost))
+    assign("Default Vendor Name", item.vendor)
+    assign("Default Vendor Code", clean_text(item.vendor_code or item.sku))
+    assign("Permalink", clean_text(item.permalink_override))
+    assign("Enabled AZ Cleaning Supplies", "N")
+    assign("Stock Alert Enabled AZ Cleaning Supplies", "N")
+    assign("Price AZ Cleaning Supplies", "")
+    assign("Enabled AZCS", "Y")
+    assign("Stock Alert Enabled AZCS", "N")
+    assign("Price AZCS", location_price)
     return row
 
 

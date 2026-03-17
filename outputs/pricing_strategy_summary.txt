@@ -17,7 +17,7 @@ Rows raised from low margin: 374
 Rows raised from trusted sales history: 23
 Rows kept at current price: 2470
 Rows using manual overrides: 0
-Rows preserved above target band: 282
+Rows preserved above target band: 275
 Average current gross margin on already-priced rows: 28.0%
 Average suggested gross margin across all costed rows: 31.3%
 Assumption: the pricing engine targets roughly 30% gross margin across the full catalog, not a flat 30% markup.

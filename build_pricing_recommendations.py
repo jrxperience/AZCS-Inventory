@@ -520,7 +520,7 @@ def choose_current_price(row: dict[str, str], updates: dict[str, PriceTotals]) -
     if update and update.current_price:
         return Decimal(update.current_price), update.last_price_update_date, update.last_price_reason
 
-    base_price_text = str(row.get("Price", "")).strip()
+    base_price_text = str(row.get("Price", "")).strip() or str(row.get("Price AZCS", "")).strip()
     if not base_price_text:
         return None, "", ""
     try:
@@ -529,9 +529,9 @@ def choose_current_price(row: dict[str, str], updates: dict[str, PriceTotals]) -
         return None, "", ""
 
 
-def write_recommendations_xlsx(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> bool:
+def write_recommendations_xlsx(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> tuple[bool, str]:
     if Workbook is None or get_column_letter is None:
-        return False
+        return False, "openpyxl not available"
 
     workbook = Workbook()
     sheet = workbook.active
@@ -583,8 +583,11 @@ def write_recommendations_xlsx(path: Path, rows: list[dict[str, str]], fieldname
     for column, width in width_overrides.items():
         sheet.column_dimensions[column].width = width
 
-    workbook.save(path)
-    return True
+    try:
+        workbook.save(path)
+    except PermissionError:
+        return False, f"file locked: {path}"
+    return True, str(path)
 
 
 def main() -> None:
@@ -720,6 +723,8 @@ def main() -> None:
             suggested_margin_total += suggested_margin or Decimal("0")
 
             updated_row["Price"] = format_money(suggested_price)
+            if "Price AZCS" in updated_row:
+                updated_row["Price AZCS"] = format_money(suggested_price)
             if suggested_price is not None:
                 updated_row["Sellable"] = "Y"
 
@@ -769,7 +774,11 @@ def main() -> None:
     write_csv(STRATEGIC_MASTER_PATH, fieldnames, strategic_master_rows)
     write_csv(SQUARE_STRATEGIC_PRICE_UPDATE_PATH, fieldnames, strategic_master_rows)
     write_csv(ISSUES_PATH, ["source_file", "row_number", "issue_type", "sku", "details"], issues)
-    xlsx_written = write_recommendations_xlsx(PRICING_RECOMMENDATIONS_XLSX_PATH, recommendation_rows, recommendation_fieldnames)
+    xlsx_written, xlsx_status = write_recommendations_xlsx(
+        PRICING_RECOMMENDATIONS_XLSX_PATH,
+        recommendation_rows,
+        recommendation_fieldnames,
+    )
 
     average_current_margin = (current_margin_total / Decimal(str(current_priced_rows))) if current_priced_rows else Decimal("0")
     average_suggested_margin = (suggested_margin_total / Decimal(str(costed_rows))) if costed_rows else Decimal("0")
@@ -777,7 +786,7 @@ def main() -> None:
     summary_lines = [
         f"Master inventory source: {master_path}",
         f"Pricing recommendations CSV: {PRICING_RECOMMENDATIONS_PATH}",
-        f"Pricing recommendations Excel: {PRICING_RECOMMENDATIONS_XLSX_PATH if xlsx_written else '[openpyxl not available]'}",
+        f"Pricing recommendations Excel: {xlsx_status}",
         f"Strategic master inventory: {STRATEGIC_MASTER_PATH}",
         f"Square strategic price update file: {SQUARE_STRATEGIC_PRICE_UPDATE_PATH}",
         f"Issues file: {ISSUES_PATH}",

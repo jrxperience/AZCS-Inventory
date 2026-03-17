@@ -11,12 +11,14 @@ Duplicate rows skipped inside the same source file: 1
 GTINs retained from source files: 2664
 GTINs added from verified overrides: 1
 GTINs added from catalog cross-reference: 59
-Rows still missing GTIN: 7255
+Rows still missing GTIN: 7020
 SEO titles generated: 9979
 Permalinks generated: 9979
-Vendor website row matches applied: 5733
-Vendor website descriptions applied: 1718
-Vendor website weights applied: 190
+Vendor website row matches applied: 5971
+Vendor website GTINs applied: 235
+Vendor website descriptions applied: 1956
+Vendor website weights applied: 427
+Rows with local product images matched: 1912
 Counts by vendor:
   BE: 2523
   Barrens: 4345
@@ -28,6 +30,8 @@ Counts by vendor:
 Vendor website matches:
   Barrens: 3498
   EacoChem: 97
+  GoldAssassin: 2
+  JRacenstein: 236
   MPWSR: 2123
   Trident: 15
 Notes:
@@ -36,11 +40,19 @@ Notes:
   - Items without a selling price were imported as Stockable=Y and Sellable=N.
   - GTIN values only populate when they pass a checksum check or come from a verified manual override.
   - SEO fields and permalinks are generated automatically from the cleaned catalog data.
+  - Local product images are tracked in the internal image database export, not the Square import file.
   - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.
-  - JRacenstein matches use exact vendor SKUs from the live catalog cards. Trident and EacoChem matches use exact base product names plus the existing pack suffix.
+  - JRacenstein matches use exact live product or variant code matches from the Storefront catalog, with size/name checks only to break ties. Trident and EacoChem matches use exact base product names plus the existing pack suffix.
   - MPWSR website enrichment used 1797 live products and matched 2123 catalog rows.
   - Barrens website enrichment used 3607 live products and matched 3498 catalog rows.
-  - JRacenstein website enrichment skipped: 500 Server Error: Internal Server Error for url: https://jracenstein.com/jracenstein/?mode=4&sort=alphaasc&limit=100
+  - JRacenstein website enrichment matched 236 exact code rows.
   - Trident website enrichment matched 15 catalog rows.
   - EacoChem website enrichment matched 97 catalog rows.
+  - Gold Assassin website enrichment matched 2 exact SKU rows. Left 1 conflicting existing weights unchanged.
+  - Local image matches from J.racenstein images: 204
+  - Local image matches from Manatee images: 1693
+  - Local image matches from Trident images/media: 15
+  - JR local image matches applied: 204.
+  - Trident local image matches applied: 15.
+  - Manatee local image matches applied: 1693.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.
