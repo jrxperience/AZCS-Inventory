@@ -1,6 +1,6 @@
 # AZCS Inventory Workflow
 
-This repo now supports four repeatable jobs:
+This repo now supports seven repeatable jobs:
 
 1. Rebuild the master Square catalog from vendor price lists.
 2. Track deliveries and manual stock adjustments by SKU.
@@ -8,15 +8,18 @@ This repo now supports four repeatable jobs:
 4. Generate Square-ready quantity and price update files.
 5. Generate strategic selling-price recommendations for the full catalog.
 6. Match Square sales history back to the catalog for pricing and review.
+7. Build an after-hours receiving import from a fresh Square export plus the current delivery batch.
 
 ## Folder layout
 
 - `inputs/price_lists/`
   Put vendor price lists here. The inventory builder uses the newest matching file for each vendor pattern.
 - `inputs/deliveries/`
-  Put one or more delivery CSVs here. Use [`templates/delivery_log_template.csv`](/C:/Codex/AZCS%20Inventory/templates/delivery_log_template.csv) as the starting format.
+  Put one or more delivery CSV or XLSX files here. Use [`templates/delivery_log_template.csv`](/C:/Codex/AZCS%20Inventory/templates/delivery_log_template.csv) as the starting format. The receiving workflow can match by `SKU`, `Vendor Code`, `GTIN`, or exact item name.
 - `inputs/adjustments/`
   Put manual stock adjustments or opening balances here. Use [`templates/inventory_adjustments_template.csv`](/C:/Codex/AZCS%20Inventory/templates/inventory_adjustments_template.csv).
+- `inputs/square_exports/`
+  Put the fresh Square item-library export for that night's receiving session here. The receiving workflow uses the newest export file in this folder as the live quantity baseline.
 - `inputs/price_updates/`
   Put selling-price changes here. Use [`templates/price_updates_template.csv`](/C:/Codex/AZCS%20Inventory/templates/price_updates_template.csv).
 - `inputs/pricing_overrides/`
@@ -83,6 +86,42 @@ This generates:
 - `outputs/stock_transaction_issues.csv`
 - `outputs/stock_snapshot_summary.txt`
 
+## Build an after-hours receiving import
+
+Use this when you want to:
+
+- export the live item library from Square after hours
+- add that night's packing slip or order details
+- import only the changed quantity rows back into Square
+
+Run:
+
+```powershell
+python build_receiving_import.py
+```
+
+This expects:
+
+1. the newest Square export in `inputs/square_exports/`
+2. the current delivery batch in `inputs/deliveries/`
+3. any same-night manual quantity corrections in `inputs/adjustments/`
+
+This generates:
+
+- `outputs/square_receiving_update.csv`
+- `outputs/square_receiving_update.xlsx`
+- `outputs/receiving_update_audit.csv`
+- `outputs/receiving_update_issues.csv`
+- `outputs/receiving_update_summary.txt`
+
+Receiving behavior:
+
+- The workflow uses the newest Square export as the live quantity baseline.
+- It updates only the `New Quantity ...` column for the target location and only for SKUs with stock activity.
+- It leaves untouched rows out of the import file so the reimport only changes the delivery batch.
+- It matches delivery rows by `SKU` first, then falls back to master-catalog `Vendor Code`, `GTIN`, and exact item name when possible.
+- It is designed for same-session after-hours export/import windows, not for daytime use while sales are still coming in.
+
 ## Build strategic pricing recommendations
 
 Run:
@@ -144,12 +183,14 @@ Sales-match behavior:
 5. Run `python build_pricing_recommendations.py`.
 6. Review `outputs/pricing_recommendations.xlsx` and `outputs/sales_item_match_review.csv`.
 7. Add deliveries, adjustments, and price updates.
-8. Run `python build_stock_snapshot.py`.
-9. Upload the quantity or price update CSVs into Square as needed.
+8. If you are doing after-hours receiving from a fresh Square export, drop that export into `inputs/square_exports/` and run `python build_receiving_import.py`.
+9. Run `python build_stock_snapshot.py`.
+10. Upload the quantity or price update CSVs into Square as needed.
 
 ## Notes
 
 - Keep old source files if you want history; the builder uses the newest matching file in `inputs/price_lists/`.
 - Delivery and adjustment files should use SKUs from the latest master inventory.
+- Archive or remove completed delivery/adjustment files after each receiving session, or they will be counted again on the next run.
 - Price update files should also use SKUs from the latest master inventory.
 - Any stock rows with missing or unknown SKUs are written to `outputs/stock_transaction_issues.csv`.

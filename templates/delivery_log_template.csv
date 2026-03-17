@@ -1,2 +1,2 @@
-Transaction Date,Vendor,SKU,Quantity Received,Unit Cost,Reference,Notes
-2026-03-16,Example Vendor,ABC123,12,19.95,PO-1001,First receiving example
+Transaction Date,Vendor,SKU,Vendor Code,GTIN,Item Name,Quantity Received,Unit Cost,Reference,Notes
+2026-03-16,Example Vendor,ABC123,ABC123,123456789012,Example Item,12,19.95,PO-1001,Fill whichever identifier you have; SKU is best but vendor code/GTIN/item name can also help match rows.
