@@ -158,6 +158,27 @@ HOME_RECIPES = (
 )
 
 
+INPUT_COLORS = {
+    "price_lists": "#d1aa4a",
+    "square_exports": "#4c72b0",
+    "deliveries": "#c64242",
+    "adjustments": "#4d8b62",
+    "sales": "#6c58a7",
+    "price_updates": "#d67c32",
+    "pricing_overrides": "#9b4f96",
+    "sales_match_overrides": "#2f8392",
+}
+
+
+WORKFLOW_COLORS = {
+    "master_inventory": "#d1aa4a",
+    "sales_match": "#6c58a7",
+    "pricing": "#c64242",
+    "receiving": "#4c72b0",
+    "stock_snapshot": "#4d8b62",
+}
+
+
 class InventoryDashboard(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -246,20 +267,62 @@ class InventoryDashboard(tk.Tk):
 
         self.tabs: dict[str, ttk.Frame] = {}
         for name in ("Home", "Uploads", "Workflows", "Outputs"):
-            frame = ttk.Frame(self.notebook, padding=12)
+            frame = ttk.Frame(self.notebook, padding=0)
             self.tabs[name] = frame
             self.notebook.add(frame, text=name)
 
-        self.home_tab = self.tabs["Home"]
-        self.uploads_tab = self.tabs["Uploads"]
-        self.workflows_tab = self.tabs["Workflows"]
-        self.outputs_tab = self.tabs["Outputs"]
+        self.home_tab = self._create_scrollable_tab(self.tabs["Home"])
+        self.uploads_tab = self._create_scrollable_tab(self.tabs["Uploads"])
+        self.workflows_tab = ttk.Frame(self.tabs["Workflows"], padding=12)
+        self.workflows_tab.pack(fill="both", expand=True)
+        self.outputs_tab = ttk.Frame(self.tabs["Outputs"], padding=12)
+        self.outputs_tab.pack(fill="both", expand=True)
 
         self._build_home_tab()
         self._build_uploads_tab()
         self._build_workflows_tab()
         self._build_outputs_tab()
         self._build_log(container)
+
+    def _create_scrollable_tab(self, parent: tk.Widget) -> tk.Frame:
+        outer = tk.Frame(parent, bg=PALETTE["bg"])
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, bg=PALETTE["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        body = tk.Frame(canvas, bg=PALETTE["bg"])
+
+        body.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        window_id = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
+        self._bind_canvas_mousewheel(canvas)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        return body
+
+    def _bind_canvas_mousewheel(self, canvas: tk.Canvas) -> None:
+        def on_mousewheel(event) -> None:
+            delta = getattr(event, "delta", 0)
+            if delta:
+                canvas.yview_scroll(int(-delta / 120), "units")
+            elif getattr(event, "num", None) == 4:
+                canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                canvas.yview_scroll(1, "units")
+
+        def bind_mousewheel(_event) -> None:
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+            canvas.bind_all("<Button-4>", on_mousewheel)
+            canvas.bind_all("<Button-5>", on_mousewheel)
+
+        def unbind_mousewheel(_event) -> None:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", bind_mousewheel)
+        canvas.bind("<Leave>", unbind_mousewheel)
 
     def _build_header(self, parent: tk.Widget) -> None:
         hero = tk.Frame(parent, bg=PALETTE["ink"], highlightthickness=1, highlightbackground=PALETTE["border"])
@@ -385,7 +448,7 @@ class InventoryDashboard(tk.Tk):
             "Uploads",
             "Copy new files into the right folders here. The dashboard does the filing so the scripts can stay simple.",
         )
-        intro.pack(fill="both", expand=True)
+        intro.pack(fill="both", expand=True, padx=12, pady=12)
 
         grid = tk.Frame(intro, bg=PALETTE["panel"])
         grid.pack(fill="both", expand=True, pady=(8, 0))
@@ -397,6 +460,8 @@ class InventoryDashboard(tk.Tk):
             row = index // 2
             column = index % 2
             card.grid(row=row, column=column, sticky="nsew", padx=(0, 10) if column == 0 else (0, 0), pady=(0, 10))
+            accent_color = INPUT_COLORS.get(folder.key, PALETTE["accent"])
+            tk.Frame(card, bg=accent_color, height=8).pack(fill="x")
 
             tk.Label(card, text=folder.label, font=("Segoe UI", 12, "bold"), bg=PALETTE["card"], fg=PALETTE["ink"]).pack(anchor="w", padx=12, pady=(10, 2))
             tk.Label(card, text=folder.description, font=("Segoe UI", 10), bg=PALETTE["card"], fg=PALETTE["muted"], wraplength=520, justify="left").pack(anchor="w", padx=12)
@@ -409,8 +474,8 @@ class InventoryDashboard(tk.Tk):
                 meta,
                 textvariable=count_var,
                 font=("Segoe UI", 9, "bold"),
-                bg=PALETTE["accent_soft"],
-                fg=PALETTE["accent_dark"],
+                bg=accent_color,
+                fg="#ffffff",
                 padx=8,
                 pady=3,
             )
@@ -456,8 +521,10 @@ class InventoryDashboard(tk.Tk):
         scrollbar = ttk.Scrollbar(shell, orient="vertical", command=canvas.yview)
         scroller = tk.Frame(canvas, bg=PALETTE["panel"])
         scroller.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroller, anchor="nw")
+        window_id = canvas.create_window((0, 0), window=scroller, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
         canvas.configure(yscrollcommand=scrollbar.set)
+        self._bind_canvas_mousewheel(canvas)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -467,7 +534,7 @@ class InventoryDashboard(tk.Tk):
             card = tk.Frame(scroller, bg=PALETTE["card"], highlightthickness=1, highlightbackground=PALETTE["border"])
             card.pack(fill="x", pady=(0, 10))
 
-            accent_bar = tk.Frame(card, bg=PALETTE["accent"], width=8)
+            accent_bar = tk.Frame(card, bg=WORKFLOW_COLORS.get(workflow.key, PALETTE["accent"]), width=8)
             accent_bar.pack(side="left", fill="y")
 
             body = tk.Frame(card, bg=PALETTE["card"])
