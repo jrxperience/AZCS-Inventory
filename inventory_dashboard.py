@@ -29,17 +29,17 @@ from dashboard_support import (
 
 
 PALETTE = {
-    "bg": "#f4eee5",
-    "panel": "#fffaf4",
+    "bg": "#e9eef8",
+    "panel": "#f8f4eb",
     "card": "#ffffff",
-    "ink": "#22313f",
-    "muted": "#5f6b76",
-    "accent": "#c16e33",
-    "accent_dark": "#9f5422",
-    "accent_soft": "#ead5c2",
-    "border": "#d9c8b3",
+    "ink": "#0f2d5c",
+    "muted": "#586781",
+    "accent": "#d1aa4a",
+    "accent_dark": "#8e6516",
+    "accent_soft": "#f3e3ae",
+    "border": "#c9b07b",
     "success": "#2f6b4f",
-    "info": "#dde8ee",
+    "info": "#dce7fb",
 }
 
 
@@ -226,12 +226,14 @@ class InventoryDashboard(tk.Tk):
         )
         style.map(
             "App.TNotebook.Tab",
-            background=[("selected", PALETTE["card"]), ("active", "#f1dfcf")],
+            background=[("selected", PALETTE["card"]), ("active", "#f5e6bd")],
             foreground=[("selected", PALETTE["accent_dark"])],
         )
 
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 8))
-        style.configure("Secondary.TButton", padding=(10, 7))
+        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 8), background=PALETTE["accent"], foreground=PALETTE["ink"])
+        style.map("Primary.TButton", background=[("active", "#e6be58")])
+        style.configure("Secondary.TButton", padding=(10, 7), background=PALETTE["info"], foreground=PALETTE["ink"])
+        style.map("Secondary.TButton", background=[("active", "#edf3ff")])
 
     def _build_layout(self) -> None:
         container = tk.Frame(self, bg=PALETTE["bg"])
@@ -275,16 +277,16 @@ class InventoryDashboard(tk.Tk):
         text_wrap.pack(side="left", fill="x", expand=True)
         tk.Label(
             text_wrap,
-            text="AZCS Inventory Control Center",
+            text="AZ Cleaning Supplies Control Center",
             font=("Segoe UI", 22, "bold"),
-            fg="#ffffff",
+            fg="#f8e8bc",
             bg=PALETTE["ink"],
         ).pack(anchor="w")
         tk.Label(
             text_wrap,
-            text="A cleaner front door for uploads, workflows, latest outputs, and run history.",
+            text="Branded tools for catalog, pricing, receiving, outputs, and run history.",
             font=("Segoe UI", 10),
-            fg="#d8e1e8",
+            fg="#d7e4ff",
             bg=PALETTE["ink"],
         ).pack(anchor="w", pady=(4, 0))
 
@@ -322,8 +324,8 @@ class InventoryDashboard(tk.Tk):
         metrics = [
             ("Input Files", self.metric_vars["input_files"], PALETTE["accent_soft"]),
             ("Latest Folders Ready", self.metric_vars["latest_ready"], PALETTE["info"]),
-            ("Archived Runs", self.metric_vars["archived_runs"], "#e7f0e4"),
-            ("Workflows", self.metric_vars["workflows"], "#efe6fb"),
+            ("Archived Runs", self.metric_vars["archived_runs"], "#e5eefc"),
+            ("Workflows", self.metric_vars["workflows"], "#f7dfdf"),
         ]
         for index, (label, variable, bg_color) in enumerate(metrics):
             card = tk.Frame(metrics_frame, bg=bg_color, highlightthickness=1, highlightbackground=PALETTE["border"])
