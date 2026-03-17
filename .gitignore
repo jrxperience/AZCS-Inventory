@@ -6,3 +6,5 @@ __pycache__/
 Images/
 latest/
 runs/
+to_import/
+to_review/

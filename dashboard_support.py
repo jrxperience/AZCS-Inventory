@@ -15,6 +15,8 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 RUNS_DIR = BASE_DIR / "runs"
 LATEST_DIR = BASE_DIR / "latest"
 ASSETS_DIR = BASE_DIR / "assets"
+TO_IMPORT_DIR = BASE_DIR / "to_import"
+TO_REVIEW_DIR = BASE_DIR / "to_review"
 ICON_PNG_PATH = ASSETS_DIR / "azcs_inventory_icon.png"
 ICON_ICO_PATH = ASSETS_DIR / "azcs_inventory_icon.ico"
 
@@ -186,15 +188,62 @@ WORKFLOWS: dict[str, Workflow] = {
 }
 
 
+PUBLISHED_OUTPUTS: dict[str, tuple[tuple[str, Path, str], ...]] = {
+    "master_inventory": (
+        ("square_master_inventory.csv", TO_IMPORT_DIR, "catalog_master_baseline.csv"),
+        ("square_master_inventory_overlap_review.csv", TO_REVIEW_DIR, "catalog_overlap_review.csv"),
+        ("square_master_inventory_summary.txt", TO_REVIEW_DIR, "catalog_build_summary.txt"),
+        ("product_enrichment_audit.csv", TO_REVIEW_DIR, "catalog_enrichment_audit.csv"),
+        ("inventory_database_with_images.csv", TO_REVIEW_DIR, "catalog_with_images.csv"),
+        ("inventory_database_with_images.xlsx", TO_REVIEW_DIR, "catalog_with_images.xlsx"),
+        ("product_image_match_audit.csv", TO_REVIEW_DIR, "catalog_image_audit.csv"),
+    ),
+    "sales_match": (
+        ("sales_item_match_audit.csv", TO_REVIEW_DIR, "sales_match_audit.csv"),
+        ("sales_item_match_audit.xlsx", TO_REVIEW_DIR, "sales_match_audit.xlsx"),
+        ("sales_item_match_review.csv", TO_REVIEW_DIR, "sales_match_review.csv"),
+        ("sales_catalog_signals.csv", TO_REVIEW_DIR, "sales_catalog_signals.csv"),
+        ("sales_match_summary.txt", TO_REVIEW_DIR, "sales_match_summary.txt"),
+        ("sales_match_issues.csv", TO_REVIEW_DIR, "sales_match_issues.csv"),
+    ),
+    "pricing": (
+        ("square_master_inventory_strategic_pricing.csv", TO_IMPORT_DIR, "catalog_import_current.csv"),
+        ("square_catalog_strategic_price_update.csv", TO_IMPORT_DIR, "catalog_price_update.csv"),
+        ("pricing_recommendations.csv", TO_REVIEW_DIR, "pricing_recommendations.csv"),
+        ("pricing_recommendations.xlsx", TO_REVIEW_DIR, "pricing_recommendations.xlsx"),
+        ("pricing_strategy_summary.txt", TO_REVIEW_DIR, "pricing_summary.txt"),
+        ("pricing_strategy_issues.csv", TO_REVIEW_DIR, "pricing_issues.csv"),
+    ),
+    "receiving": (
+        ("square_receiving_update.csv", TO_IMPORT_DIR, "receiving_import.csv"),
+        ("square_receiving_update.xlsx", TO_IMPORT_DIR, "receiving_import.xlsx"),
+        ("receiving_update_audit.csv", TO_REVIEW_DIR, "receiving_audit.csv"),
+        ("receiving_update_issues.csv", TO_REVIEW_DIR, "receiving_issues.csv"),
+        ("receiving_update_summary.txt", TO_REVIEW_DIR, "receiving_summary.txt"),
+    ),
+    "stock_snapshot": (
+        ("square_inventory_quantity_update.csv", TO_IMPORT_DIR, "quantity_update_from_transactions.csv"),
+        ("square_catalog_price_update.csv", TO_IMPORT_DIR, "catalog_price_update_from_transactions.csv"),
+        ("current_stock_snapshot.csv", TO_REVIEW_DIR, "current_stock_snapshot.csv"),
+        ("current_pricing_snapshot.csv", TO_REVIEW_DIR, "current_pricing_snapshot.csv"),
+        ("stock_snapshot_summary.txt", TO_REVIEW_DIR, "stock_snapshot_summary.txt"),
+        ("stock_transaction_issues.csv", TO_REVIEW_DIR, "stock_transaction_issues.csv"),
+    ),
+}
+
+
 def ensure_runtime_dirs() -> None:
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     LATEST_DIR.mkdir(parents=True, exist_ok=True)
+    TO_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    TO_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     for folder in INPUT_FOLDERS.values():
         folder.path.mkdir(parents=True, exist_ok=True)
     for workflow in WORKFLOWS.values():
         (LATEST_DIR / workflow.key).mkdir(parents=True, exist_ok=True)
+    _write_workspace_guides()
 
 
 def list_input_files(folder_key: str) -> list[Path]:
@@ -229,6 +278,37 @@ def _clear_directory_contents(path: Path) -> None:
             child.unlink()
         elif child.is_dir():
             shutil.rmtree(child)
+
+
+def _write_workspace_guides() -> None:
+    import_lines = [
+        "Use this folder for the simple, current import files.",
+        "catalog_import_current.csv = full current master import with pricing applied.",
+        "catalog_master_baseline.csv = baseline master catalog without the strategic pricing overlay.",
+        "catalog_price_update.csv = price-only Square update file from the pricing workflow.",
+        "receiving_import.csv = after-hours receiving import built from a fresh Square export.",
+        "quantity_update_from_transactions.csv = quantity update file from the stock snapshot workflow.",
+        "catalog_price_update_from_transactions.csv = price update file from the stock snapshot workflow.",
+    ]
+    review_lines = [
+        "Use this folder for the simple, current review and workbook files.",
+        "catalog_overlap_review.csv = duplicate and merge review items from the master build.",
+        "pricing_recommendations.xlsx = the pricing workbook to review first.",
+        "sales_match_review.csv = unresolved sales rows that still need manual review.",
+        "receiving_audit.csv = what changed in the current receiving import.",
+        "current_stock_snapshot.csv = current internal stock snapshot from transaction logs.",
+    ]
+    (TO_IMPORT_DIR / "README.txt").write_text("\n".join(import_lines), encoding="utf-8")
+    (TO_REVIEW_DIR / "README.txt").write_text("\n".join(review_lines), encoding="utf-8")
+
+
+def _publish_friendly_outputs(workflow_key: str, run_dir: Path) -> None:
+    for source_name, destination_dir, published_name in PUBLISHED_OUTPUTS.get(workflow_key, ()):
+        source = run_dir / source_name
+        if not source.exists():
+            continue
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination_dir / published_name)
 
 
 def _write_run_log(run_dir: Path, result: RunResult) -> None:
@@ -299,6 +379,7 @@ def run_workflow(workflow_key: str) -> RunResult:
     _write_run_log(run_dir, result)
     if result.success:
         shutil.copy2(run_dir / "run_log.txt", latest_dir / "run_log.txt")
+        _publish_friendly_outputs(workflow.key, run_dir)
     return result
 
 
@@ -312,3 +393,18 @@ def list_recent_runs(limit: int = 10) -> list[Path]:
     ensure_runtime_dirs()
     run_dirs = [path for path in RUNS_DIR.iterdir() if path.is_dir()]
     return sorted(run_dirs, key=lambda path: path.name, reverse=True)[:limit]
+
+
+def publish_existing_outputs() -> list[Path]:
+    ensure_runtime_dirs()
+    published: list[Path] = []
+    for workflow_key, mappings in PUBLISHED_OUTPUTS.items():
+        for source_name, destination_dir, published_name in mappings:
+            source = OUTPUT_DIR / source_name
+            if not source.exists():
+                continue
+            destination_dir.mkdir(parents=True, exist_ok=True)
+            target = destination_dir / published_name
+            shutil.copy2(source, target)
+            published.append(target)
+    return published

@@ -39,6 +39,10 @@ This repo now supports seven repeatable jobs:
   The dashboard copies the newest successful outputs for each workflow here so you have a clean place to open the current files.
 - `runs/`
   The dashboard archives each successful workflow run here under a timestamped folder.
+- `to_import/`
+  The dashboard also keeps the most important current import files here with simpler names like `catalog_import_current.csv`, `receiving_import.csv`, and `catalog_price_update.csv`.
+- `to_review/`
+  The dashboard keeps the most important current review files here with simpler names like `pricing_recommendations.xlsx`, `catalog_overlap_review.csv`, and `sales_match_review.csv`.
 
 ## Run the dashboard
 
@@ -57,6 +61,7 @@ What the dashboard gives you:
 - one place to copy files into the right input folders
 - one-click workflow runs for master inventory, sales match, pricing, receiving, and stock snapshots
 - a cleaner `latest/<workflow>/` area for the newest successful files
+- simpler `to_import/` and `to_review/` folders with easy-to-remember current file names
 - timestamped `runs/<timestamp>/<workflow>/` archives for run history and logs
 
 ## Rebuild the master inventory

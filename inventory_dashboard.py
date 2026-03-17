@@ -17,6 +17,8 @@ from dashboard_support import (
     INPUT_FOLDERS,
     LATEST_DIR,
     RUNS_DIR,
+    TO_IMPORT_DIR,
+    TO_REVIEW_DIR,
     WORKFLOWS,
     copy_files_to_input,
     ensure_runtime_dirs,
@@ -24,6 +26,7 @@ from dashboard_support import (
     list_latest_outputs,
     list_recent_runs,
     open_path,
+    publish_existing_outputs,
     run_workflow,
 )
 
@@ -213,6 +216,7 @@ class InventoryDashboard(tk.Tk):
         self._apply_icon()
         self._configure_style()
         self._build_layout()
+        publish_existing_outputs()
         self.refresh_all()
         self.after(250, self._poll_events)
 
@@ -355,8 +359,9 @@ class InventoryDashboard(tk.Tk):
 
         actions = tk.Frame(hero, bg=PALETTE["ink"])
         actions.pack(side="right", padx=16, pady=16)
-        ttk.Button(actions, text="Open Repo Folder", style="Secondary.TButton", command=lambda: self._open_path(BASE_DIR)).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Open Latest Folder", style="Secondary.TButton", command=lambda: self._open_path(LATEST_DIR)).pack(side="left")
+        ttk.Button(actions, text="Open To Import", style="Secondary.TButton", command=lambda: self._open_path(TO_IMPORT_DIR)).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Open To Review", style="Secondary.TButton", command=lambda: self._open_path(TO_REVIEW_DIR)).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Open Repo Folder", style="Secondary.TButton", command=lambda: self._open_path(BASE_DIR)).pack(side="left")
 
     def _build_log(self, parent: tk.Widget) -> None:
         log_frame = ttk.LabelFrame(parent, text="Run Log", padding=10)
@@ -429,6 +434,8 @@ class InventoryDashboard(tk.Tk):
         guide_lines = [
             "Uploads is where new files go. Nothing runs from there until you click a workflow button.",
             "Workflows is where processing happens. Run one workflow at a time.",
+            "To Import holds the simple current import files with the easiest names to remember.",
+            "To Review holds the current workbooks, review queues, and summary files.",
             "Outputs shows the newest successful files in clean folders, so you do not have to sort through the whole repo.",
             "Runs keeps a timestamped archive of each successful workflow run and its log.",
             "For receiving, always use a fresh Square export from the same after-hours session.",
@@ -440,7 +447,8 @@ class InventoryDashboard(tk.Tk):
         quick_card.pack(fill="x", pady=(14, 0))
         ttk.Button(quick_card, text="Open Uploads", command=lambda: self._select_tab("Uploads")).pack(side="left", padx=(0, 8))
         ttk.Button(quick_card, text="Open Workflows", command=lambda: self._select_tab("Workflows")).pack(side="left", padx=(0, 8))
-        ttk.Button(quick_card, text="Open Outputs", command=lambda: self._select_tab("Outputs")).pack(side="left")
+        ttk.Button(quick_card, text="Open To Import", command=lambda: self._open_path(TO_IMPORT_DIR)).pack(side="left", padx=(0, 8))
+        ttk.Button(quick_card, text="Open To Review", command=lambda: self._open_path(TO_REVIEW_DIR)).pack(side="left")
 
     def _build_uploads_tab(self) -> None:
         intro = self._card(
