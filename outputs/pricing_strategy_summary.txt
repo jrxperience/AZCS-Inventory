@@ -1,0 +1,24 @@
+Master inventory source: C:\Codex\AZCS Inventory\outputs\square_master_inventory.csv
+Pricing recommendations CSV: C:\Codex\AZCS Inventory\outputs\pricing_recommendations.csv
+Pricing recommendations Excel: C:\Codex\AZCS Inventory\outputs\pricing_recommendations.xlsx
+Strategic master inventory: C:\Codex\AZCS Inventory\outputs\square_master_inventory_strategic_pricing.csv
+Square strategic price update file: C:\Codex\AZCS Inventory\outputs\square_catalog_strategic_price_update.csv
+Issues file: C:\Codex\AZCS Inventory\outputs\pricing_strategy_issues.csv
+Price update files processed: 0
+Pricing override files processed: 0
+Sales signal rows loaded: 169
+Rows with usable cost: 9974
+Rows with current selling price: 2867
+Rows with sales history: 169
+Rows with trusted sales signals: 149
+Rows raised by realized sales anchor: 50
+Rows with missing price filled: 7107
+Rows raised from low margin: 374
+Rows raised from trusted sales history: 23
+Rows kept at current price: 2470
+Rows using manual overrides: 0
+Rows preserved above target band: 282
+Average current gross margin on already-priced rows: 28.0%
+Average suggested gross margin across all costed rows: 31.3%
+Assumption: the pricing engine targets roughly 30% gross margin across the full catalog, not a flat 30% markup.
+Rule summary: lower-cost items carry higher markup percentages, large equipment carries lower margin targets, chemicals / premium tools / bundles get higher strategic targets than commodity parts, and trusted sales history can tighten the target or support a higher price anchor.

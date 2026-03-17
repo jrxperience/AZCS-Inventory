@@ -1,0 +1,18 @@
+Master inventory source: C:\Codex\AZCS Inventory\outputs\square_master_inventory.csv
+Sales source: C:\Users\JRAZC\Downloads\Sales by item.csv
+Sales match audit CSV: C:\Codex\AZCS Inventory\outputs\sales_item_match_audit.csv
+Sales match audit Excel: C:\Codex\AZCS Inventory\outputs\sales_item_match_audit.xlsx
+Sales review file: C:\Codex\AZCS Inventory\outputs\sales_item_match_review.csv
+Sales catalog signals file: C:\Codex\AZCS Inventory\outputs\sales_catalog_signals.csv
+Issues file: C:\Codex\AZCS Inventory\outputs\sales_match_issues.csv
+Unique sales items analyzed: 532
+Total sales lines analyzed: 2786
+Accepted matches: 182
+Review rows: 350
+Matched sales lines: 1401
+Matched net sales: 463795.13
+Total net sales: 615843.68
+Matched sales line coverage: 50.28715003589375448671931084%
+Matched net sales coverage: 75.31052847696675234208784931%
+Accepted match types: manual_override, exact_sku, exact_gtin, exact_name, exact_base_name, exact_base_name_pack, exact_base_code, exact_base_code_pack, exact_code, high_confidence_fuzzy.
+Review rows include weaker fuzzy candidates and truly unmatched items so they can be pinned with manual overrides later.
