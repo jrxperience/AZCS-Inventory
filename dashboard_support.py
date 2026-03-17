@@ -14,6 +14,9 @@ INPUT_DIR = BASE_DIR / "inputs"
 OUTPUT_DIR = BASE_DIR / "outputs"
 RUNS_DIR = BASE_DIR / "runs"
 LATEST_DIR = BASE_DIR / "latest"
+ASSETS_DIR = BASE_DIR / "assets"
+ICON_PNG_PATH = ASSETS_DIR / "azcs_inventory_icon.png"
+ICON_ICO_PATH = ASSETS_DIR / "azcs_inventory_icon.ico"
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,7 @@ INPUT_FOLDERS: dict[str, InputFolder] = {
 WORKFLOWS: dict[str, Workflow] = {
     "master_inventory": Workflow(
         key="master_inventory",
-        name="Master Inventory",
+        name="Build Master Inventory",
         script_name="build_master_inventory.py",
         description="Rebuild the Square catalog from vendor price lists and website/image enrichment.",
         input_keys=("price_lists",),
@@ -123,7 +126,7 @@ WORKFLOWS: dict[str, Workflow] = {
     ),
     "sales_match": Workflow(
         key="sales_match",
-        name="Sales Match",
+        name="Match Sales History",
         script_name="build_sales_match_audit.py",
         description="Match Square sales history back to catalog SKUs and flag weak matches for review.",
         input_keys=("sales", "sales_match_overrides"),
@@ -138,7 +141,7 @@ WORKFLOWS: dict[str, Workflow] = {
     ),
     "pricing": Workflow(
         key="pricing",
-        name="Strategic Pricing",
+        name="Build Pricing Recommendations",
         script_name="build_pricing_recommendations.py",
         description="Generate catalog pricing recommendations, strategic imports, and price update files.",
         input_keys=("price_updates", "pricing_overrides", "sales"),
@@ -153,7 +156,7 @@ WORKFLOWS: dict[str, Workflow] = {
     ),
     "receiving": Workflow(
         key="receiving",
-        name="After-Hours Receiving",
+        name="Build After-Hours Receiving Import",
         script_name="build_receiving_import.py",
         description="Build a small Square-ready receiving import from a fresh Square export plus the current delivery batch.",
         input_keys=("square_exports", "deliveries", "adjustments"),
@@ -167,7 +170,7 @@ WORKFLOWS: dict[str, Workflow] = {
     ),
     "stock_snapshot": Workflow(
         key="stock_snapshot",
-        name="Stock Snapshot",
+        name="Build Stock Snapshots",
         script_name="build_stock_snapshot.py",
         description="Update stock and pricing snapshots from delivery, adjustment, and price update files.",
         input_keys=("deliveries", "adjustments", "price_updates"),
