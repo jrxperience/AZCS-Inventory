@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import pdfplumber
 import requests
 from bs4 import BeautifulSoup
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from pypdf import PdfReader
 
 
@@ -32,6 +32,13 @@ MASTER_OUT_PATH = OUTPUT_DIR / "square_master_inventory.csv"
 REVIEW_OUT_PATH = OUTPUT_DIR / "square_master_inventory_overlap_review.csv"
 SUMMARY_OUT_PATH = OUTPUT_DIR / "square_master_inventory_summary.txt"
 ENRICHMENT_AUDIT_OUT_PATH = OUTPUT_DIR / "product_enrichment_audit.csv"
+IMAGE_DATABASE_OUT_PATH = OUTPUT_DIR / "inventory_database_with_images.csv"
+IMAGE_DATABASE_XLSX_OUT_PATH = OUTPUT_DIR / "inventory_database_with_images.xlsx"
+IMAGE_AUDIT_OUT_PATH = OUTPUT_DIR / "product_image_match_audit.csv"
+IMAGE_DIR = BASE_DIR / "Images"
+JRACENSTEIN_IMAGE_DIR = IMAGE_DIR / "J.racenstein images"
+MANATEE_IMAGE_DIR = IMAGE_DIR / "Manatee images"
+TRIDENT_IMAGE_DIR = IMAGE_DIR / "Trident images" / "media"
 
 CENT = Decimal("0.01")
 MONEY_RE = re.compile(r"\$?\s*\d[\d,\s]*\.\d{2}")
@@ -170,6 +177,12 @@ class SourceItem:
     seo_title_override: str = ""
     seo_description_override: str = ""
     weight_lb_override: Decimal | None = None
+    image_relative_path: str = ""
+    image_absolute_path: str = ""
+    image_match_type: str = ""
+    image_source_folder: str = ""
+    image_lookup_tokens: list[str] = field(default_factory=list)
+    image_lookup_slug: str = ""
 
 
 @dataclass
@@ -196,6 +209,19 @@ class EnrichmentAuditEntry:
     field: str
     value: str
     source: str
+    details: str = ""
+
+
+@dataclass
+class ImageMatchAuditEntry:
+    vendor: str
+    sku: str
+    vendor_code: str
+    item_name: str
+    image_relative_path: str
+    image_absolute_path: str
+    match_type: str
+    source_folder: str
     details: str = ""
 
 
@@ -329,6 +355,20 @@ def slugify(value: str) -> str:
     text = clean_text(value).lower()
     text = re.sub(r"[^a-z0-9]+", "-", text)
     return text.strip("-")
+
+
+def local_image_stem_key(value: str) -> str:
+    stem = clean_text(Path(str(value)).stem).lower()
+    stem = re.sub(r"_[0-9]+$", "", stem)
+    stem = re.sub(r"^\d+[-_]+", "", stem)
+    return slugify(stem)
+
+
+def relative_repo_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(BASE_DIR.resolve()))
+    except Exception:
+        return str(path.resolve())
 
 
 def format_weight(value: Decimal | None) -> str:
@@ -1492,6 +1532,18 @@ def build_jracenstein_permalink(item: SourceItem, candidate: dict[str, object]) 
     return clean_text(combined)
 
 
+def unique_nonempty(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = clean_text(value)
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
 def filter_jracenstein_candidates_by_keywords(
     item: SourceItem,
     candidates: list[dict[str, object]],
@@ -1763,6 +1815,16 @@ def apply_direct_vendor_enrichments(
                     unresolved_candidates += 1
                 continue
 
+            item.image_lookup_tokens = unique_nonempty(
+                [
+                    clean_text(resolved.get("variant_sku", "")),
+                    clean_text(resolved.get("product_sku", "")),
+                    clean_text(item.vendor_code),
+                    clean_text(item.sku),
+                ]
+            )
+            item.image_lookup_slug = path_slug_from_url(clean_text(resolved.get("product_url", "")))
+
             product_url = clean_text(resolved.get("product_url", ""))
             candidate_name = jracenstein_candidate_name(item, resolved)
             match_detail = (
@@ -1878,6 +1940,7 @@ def apply_direct_vendor_enrichments(
             if key not in trident_products:
                 continue
             product = trident_products[key]
+            item.image_lookup_slug = path_slug_from_url(product["url"])
             customer_name = combine_title_with_suffix(product["title"], pack_suffix)
             if customer_name and customer_name != product_display_name(item):
                 item.customer_facing_name_override = customer_name
@@ -2013,6 +2076,7 @@ def apply_direct_vendor_enrichments(
 
         for item in gold_items:
             gold_product = gold_products[normalize_sku(item.vendor_code or item.sku)]
+            item.image_lookup_slug = path_slug_from_url(clean_text(gold_product.get("url", "")))
             customer_name = clean_text(gold_product.get("title", ""))
             product_url = clean_text(gold_product.get("url", ""))
             if customer_name and customer_name != product_display_name(item):
@@ -2100,6 +2164,130 @@ def apply_direct_vendor_enrichments(
         notes.append(f"Gold Assassin website enrichment skipped: {exc}")
 
     return audit_entries, match_counts, detail_counts, notes
+
+
+def set_item_image_match(
+    item: SourceItem,
+    image_path: Path,
+    match_type: str,
+    source_folder: str,
+) -> None:
+    item.image_relative_path = relative_repo_path(image_path)
+    item.image_absolute_path = str(image_path.resolve())
+    item.image_match_type = clean_text(match_type)
+    item.image_source_folder = clean_text(source_folder)
+
+
+def build_unique_path_index(paths: list[Path], key_builder) -> dict[str, Path]:
+    grouped: dict[str, list[Path]] = defaultdict(list)
+    for path in paths:
+        if not path.is_file():
+            continue
+        key = clean_text(key_builder(path))
+        if not key:
+            continue
+        grouped[key].append(path)
+    return {key: values[0] for key, values in grouped.items() if len(values) == 1}
+
+
+def apply_local_image_matches(
+    items: list[SourceItem],
+) -> tuple[list[ImageMatchAuditEntry], Counter[str], list[str]]:
+    audit_entries: list[ImageMatchAuditEntry] = []
+    match_counts: Counter[str] = Counter()
+    notes: list[str] = []
+
+    jr_files = list(JRACENSTEIN_IMAGE_DIR.glob("*")) if JRACENSTEIN_IMAGE_DIR.exists() else []
+    trident_files = list(TRIDENT_IMAGE_DIR.glob("*")) if TRIDENT_IMAGE_DIR.exists() else []
+    manatee_files = list(MANATEE_IMAGE_DIR.glob("*")) if MANATEE_IMAGE_DIR.exists() else []
+
+    jr_index = build_unique_path_index(jr_files, lambda path: normalize_sku(path.stem))
+    trident_index = build_unique_path_index(trident_files, lambda path: local_image_stem_key(path.stem))
+    manatee_code_index = build_unique_path_index(manatee_files, lambda path: normalize_sku(path.stem))
+    manatee_name_index = build_unique_path_index(manatee_files, lambda path: normalize_name(path.stem))
+
+    for item in items:
+        image_path: Path | None = None
+        match_type = ""
+        source_folder = ""
+        detail = ""
+
+        if item.reporting_category == "JRacenstein":
+            for token in unique_nonempty(item.image_lookup_tokens + [item.vendor_code, item.sku]):
+                key = normalize_sku(token)
+                if key in jr_index:
+                    image_path = jr_index[key]
+                    match_type = "jracenstein_image_code"
+                    source_folder = "J.racenstein images"
+                    detail = f"Matched local image filename on exact JR code token {token}."
+                    break
+
+        elif item.reporting_category == "Trident":
+            trident_keys = unique_nonempty(
+                [
+                    item.image_lookup_slug,
+                    item.permalink_override,
+                    slugify(product_display_name(item)),
+                    slugify(item.item_name),
+                ]
+            )
+            for token in trident_keys:
+                key = local_image_stem_key(token)
+                if key in trident_index:
+                    image_path = trident_index[key]
+                    match_type = "trident_image_slug"
+                    source_folder = "Trident images/media"
+                    detail = f"Matched local Trident image on slug {token}."
+                    break
+
+        else:
+            for token in unique_nonempty([item.vendor_code, item.sku]):
+                key = normalize_sku(token)
+                if key in manatee_code_index:
+                    image_path = manatee_code_index[key]
+                    match_type = "manatee_exact_code"
+                    source_folder = "Manatee images"
+                    detail = f"Matched local image filename on exact code token {token}."
+                    break
+
+            if image_path is None:
+                candidate_paths: list[tuple[Path, str, str]] = []
+                for label in unique_nonempty([product_display_name(item), item.item_name]):
+                    name_key = normalize_name(label)
+                    if name_key in manatee_name_index:
+                        candidate_paths.append((manatee_name_index[name_key], "manatee_exact_name", label))
+                unique_paths = {path.resolve(): (path, match_type_value, label) for path, match_type_value, label in candidate_paths}
+                if len(unique_paths) == 1:
+                    image_path, match_type, label = next(iter(unique_paths.values()))
+                    source_folder = "Manatee images"
+                    detail = f"Matched local image on exact normalized name from {label}."
+
+        if image_path is None:
+            continue
+
+        set_item_image_match(item, image_path, match_type, source_folder)
+        audit_entries.append(
+            ImageMatchAuditEntry(
+                vendor=item.vendor,
+                sku=item.sku,
+                vendor_code=clean_text(item.vendor_code or item.sku),
+                item_name=item.item_name,
+                image_relative_path=item.image_relative_path,
+                image_absolute_path=item.image_absolute_path,
+                match_type=match_type,
+                source_folder=source_folder,
+                details=detail,
+            )
+        )
+        match_counts[source_folder] += 1
+
+    if jr_files:
+        notes.append(f"JR local image matches applied: {match_counts['J.racenstein images']}.")
+    if trident_files:
+        notes.append(f"Trident local image matches applied: {match_counts['Trident images/media']}.")
+    if manatee_files:
+        notes.append(f"Manatee local image matches applied: {match_counts['Manatee images']}.")
+    return audit_entries, match_counts, notes
 
 
 def item_lookup_tokens(item: SourceItem) -> set[str]:
@@ -2633,6 +2821,41 @@ def write_review_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+def build_image_database_rows(
+    items: list[SourceItem],
+    master_rows: list[dict[str, str]],
+) -> tuple[list[str], list[dict[str, str]]]:
+    image_columns = [
+        "Local Image Relative Path",
+        "Local Image Absolute Path",
+        "Local Image Match Type",
+        "Local Image Source Folder",
+        "Has Local Image",
+    ]
+    fieldnames = list(master_rows[0].keys()) + image_columns if master_rows else image_columns
+    rows: list[dict[str, str]] = []
+    for item, master_row in zip(items, master_rows):
+        row = dict(master_row)
+        row["Local Image Relative Path"] = clean_text(item.image_relative_path)
+        row["Local Image Absolute Path"] = clean_text(item.image_absolute_path)
+        row["Local Image Match Type"] = clean_text(item.image_match_type)
+        row["Local Image Source Folder"] = clean_text(item.image_source_folder)
+        row["Has Local Image"] = "Y" if clean_text(item.image_relative_path) else "N"
+        rows.append(row)
+    return fieldnames, rows
+
+
+def write_image_database_xlsx(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Inventory"
+    sheet.append(fieldnames)
+    for row in rows:
+        sheet.append([row.get(field, "") for field in fieldnames])
+    sheet.freeze_panes = "A2"
+    workbook.save(path)
+
+
 def write_enrichment_audit_csv(path: Path, entries: list[EnrichmentAuditEntry]) -> None:
     fieldnames = [
         "enrichment_type",
@@ -2659,6 +2882,37 @@ def write_enrichment_audit_csv(path: Path, entries: list[EnrichmentAuditEntry]) 
                     "field": clean_text(entry.field),
                     "value": clean_text(entry.value),
                     "source": clean_text(entry.source),
+                    "details": clean_text(entry.details),
+                }
+            )
+
+
+def write_image_match_audit_csv(path: Path, entries: list[ImageMatchAuditEntry]) -> None:
+    fieldnames = [
+        "vendor",
+        "sku",
+        "vendor_code",
+        "item_name",
+        "image_relative_path",
+        "image_absolute_path",
+        "match_type",
+        "source_folder",
+        "details",
+    ]
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow(
+                {
+                    "vendor": clean_text(entry.vendor),
+                    "sku": clean_text(entry.sku),
+                    "vendor_code": clean_text(entry.vendor_code),
+                    "item_name": clean_text(entry.item_name),
+                    "image_relative_path": clean_text(entry.image_relative_path),
+                    "image_absolute_path": clean_text(entry.image_absolute_path),
+                    "match_type": clean_text(entry.match_type),
+                    "source_folder": clean_text(entry.source_folder),
                     "details": clean_text(entry.details),
                 }
             )
@@ -2694,6 +2948,9 @@ def summarize(
     website_match_counts: Counter[str],
     website_detail_counts: Counter[str],
     website_notes: list[str],
+    image_match_counts: Counter[str],
+    image_notes: list[str],
+    image_rows_matched: int,
 ) -> str:
     lines = [
         f"Square master inventory: {MASTER_OUT_PATH}",
@@ -2716,6 +2973,7 @@ def summarize(
         f"Vendor website GTINs applied: {website_detail_counts['gtins']}",
         f"Vendor website descriptions applied: {website_detail_counts['descriptions']}",
         f"Vendor website weights applied: {website_detail_counts['weights']}",
+        f"Rows with local product images matched: {image_rows_matched}",
         "Counts by vendor:",
     ]
     for vendor in sorted(counts_by_vendor):
@@ -2730,9 +2988,14 @@ def summarize(
     lines.append("  - Items without a selling price were imported as Stockable=Y and Sellable=N.")
     lines.append("  - GTIN values only populate when they pass a checksum check or come from a verified manual override.")
     lines.append("  - SEO fields and permalinks are generated automatically from the cleaned catalog data.")
+    lines.append("  - Local product images are tracked in the internal image database export, not the Square import file.")
     lines.append("  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.")
     lines.append("  - JRacenstein matches use exact live product or variant code matches from the Storefront catalog, with size/name checks only to break ties. Trident and EacoChem matches use exact base product names plus the existing pack suffix.")
     for note in website_notes:
+        lines.append(f"  - {note}")
+    for folder in sorted(image_match_counts):
+        lines.append(f"  - Local image matches from {folder}: {image_match_counts[folder]}")
+    for note in image_notes:
         lines.append(f"  - {note}")
     lines.append("  - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.")
     return "\n".join(lines)
@@ -2765,16 +3028,21 @@ def main() -> None:
     website_match_counts.update(direct_match_counts)
     website_detail_counts.update(direct_detail_counts)
     website_notes.extend(direct_notes)
+    image_audit_entries, image_match_counts, image_notes = apply_local_image_matches(source_items)
 
     master_rows = [build_square_row(item, square_headers) for item in source_items]
     permalinks_generated = assign_unique_permalinks(master_rows)
+    image_database_fieldnames, image_database_rows = build_image_database_rows(source_items, master_rows)
     review_rows = build_review_rows(merge_issues + rename_issues + parser_issues)
     write_enrichment_audit_csv(
         ENRICHMENT_AUDIT_OUT_PATH,
         verified_audit_entries + catalog_audit_entries + website_audit_entries + direct_audit_entries,
     )
+    write_image_match_audit_csv(IMAGE_AUDIT_OUT_PATH, image_audit_entries)
 
     write_master_csv(MASTER_OUT_PATH, square_headers, master_rows)
+    write_master_csv(IMAGE_DATABASE_OUT_PATH, image_database_fieldnames, image_database_rows)
+    write_image_database_xlsx(IMAGE_DATABASE_XLSX_OUT_PATH, image_database_fieldnames, image_database_rows)
     write_review_csv(REVIEW_OUT_PATH, review_rows)
 
     summary = summarize(
@@ -2795,6 +3063,9 @@ def main() -> None:
         website_match_counts=website_match_counts,
         website_detail_counts=website_detail_counts,
         website_notes=website_notes,
+        image_match_counts=image_match_counts,
+        image_notes=image_notes,
+        image_rows_matched=len(image_audit_entries),
     )
     SUMMARY_OUT_PATH.write_text(summary, encoding="utf-8")
     print(summary)

@@ -38,6 +38,9 @@ This generates:
 - `outputs/square_master_inventory_overlap_review.csv`
 - `outputs/square_master_inventory_summary.txt`
 - `outputs/product_enrichment_audit.csv`
+- `outputs/inventory_database_with_images.csv`
+- `outputs/inventory_database_with_images.xlsx`
+- `outputs/product_image_match_audit.csv`
 
 Current dedupe behavior:
 
@@ -50,6 +53,7 @@ Current dedupe behavior:
 - JRacenstein enrichment now uses the live Storefront catalog for exact product or variant code matches. When a code match is exact, it can fill customer-facing names, descriptions, GTINs, weights, and stronger permalinks.
 - Gold Assassin enrichment is enabled for exact live manufacturer SKUs found in the catalog. It can tighten names/descriptions/permalinks and fill missing weights when the manufacturer site publishes them clearly.
 - Direct product-page enrichment is also enabled for Trident and EaCo Chem. It uses exact base product-name matches and preserves the existing pack-size suffix in your catalog rows.
+- Local image matching is enabled for the `Images/` folder. Image paths are added to the internal inventory database exports and image-audit file, but not to the Square import file because Square's item import template does not include image columns.
 
 ## Track deliveries, stock, and selling prices
 
