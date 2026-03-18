@@ -170,6 +170,20 @@ WORKFLOWS: dict[str, Workflow] = {
             "receiving_update_summary.txt",
         ),
     ),
+    "seed_stock": Workflow(
+        key="seed_stock",
+        name="Seed AZCS Stock From Square Export",
+        script_name="build_seed_stock_import.py",
+        description="Copy current stock from the live Square export into the AZCS New Quantity column for the full catalog import.",
+        input_keys=("square_exports",),
+        output_files=(
+            "square_seed_stock_import.csv",
+            "square_seed_stock_import.xlsx",
+            "stock_seed_audit.csv",
+            "stock_seed_issues.csv",
+            "stock_seed_summary.txt",
+        ),
+    ),
     "stock_snapshot": Workflow(
         key="stock_snapshot",
         name="Build Stock Snapshots",
@@ -220,6 +234,13 @@ PUBLISHED_OUTPUTS: dict[str, tuple[tuple[str, Path, str], ...]] = {
         ("receiving_update_audit.csv", TO_REVIEW_DIR, "receiving_audit.csv"),
         ("receiving_update_issues.csv", TO_REVIEW_DIR, "receiving_issues.csv"),
         ("receiving_update_summary.txt", TO_REVIEW_DIR, "receiving_summary.txt"),
+    ),
+    "seed_stock": (
+        ("square_seed_stock_import.csv", TO_IMPORT_DIR, "catalog_import_current_with_stock.csv"),
+        ("square_seed_stock_import.xlsx", TO_IMPORT_DIR, "catalog_import_current_with_stock.xlsx"),
+        ("stock_seed_audit.csv", TO_REVIEW_DIR, "stock_seed_audit.csv"),
+        ("stock_seed_issues.csv", TO_REVIEW_DIR, "stock_seed_issues.csv"),
+        ("stock_seed_summary.txt", TO_REVIEW_DIR, "stock_seed_summary.txt"),
     ),
     "stock_snapshot": (
         ("square_inventory_quantity_update.csv", TO_IMPORT_DIR, "quantity_update_from_transactions.csv"),
@@ -287,6 +308,7 @@ def _write_workspace_guides() -> None:
         "catalog_master_baseline.csv = baseline master catalog without the strategic pricing overlay.",
         "catalog_price_update.csv = price-only Square update file from the pricing workflow.",
         "receiving_import.csv = after-hours receiving import built from a fresh Square export.",
+        "catalog_import_current_with_stock.csv = full current import with AZCS stock seeded from the latest live Square export.",
         "quantity_update_from_transactions.csv = quantity update file from the stock snapshot workflow.",
         "catalog_price_update_from_transactions.csv = price update file from the stock snapshot workflow.",
     ]
@@ -296,6 +318,7 @@ def _write_workspace_guides() -> None:
         "pricing_recommendations.xlsx = the pricing workbook to review first.",
         "sales_match_review.csv = unresolved sales rows that still need manual review.",
         "receiving_audit.csv = what changed in the current receiving import.",
+        "stock_seed_audit.csv = which live export rows were copied into the seeded AZCS import.",
         "current_stock_snapshot.csv = current internal stock snapshot from transaction logs.",
     ]
     (TO_IMPORT_DIR / "README.txt").write_text("\n".join(import_lines), encoding="utf-8")

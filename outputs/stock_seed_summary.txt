@@ -1,0 +1,18 @@
+Catalog source: C:\Codex\AZCS Inventory\to_import\catalog_import_current.csv
+Square export source: C:\Codex\AZCS Inventory\inputs\square_exports\MLT3E97CHP443_catalog-2026-03-18-2021.xlsx
+Seeded import CSV: C:\Codex\AZCS Inventory\outputs\square_seed_stock_import.csv
+Seeded import Excel: C:\Codex\AZCS Inventory\outputs\square_seed_stock_import.xlsx
+Seed audit: C:\Codex\AZCS Inventory\outputs\stock_seed_audit.csv
+Seed issues: C:\Codex\AZCS Inventory\outputs\stock_seed_issues.csv
+Detected live source location: AZ Cleaning Supplies
+Source current quantity column: Current Quantity AZ Cleaning Supplies
+Seeded target new quantity column: New Quantity AZCS
+Export item rows processed: 1172
+Catalog rows in import: 9979
+Matched export rows seeded into catalog: 156
+Catalog rows with seeded quantity values: 156
+Catalog rows with non-zero seeded quantities: 156
+Total quantity copied from live source location: 819
+Issue rows: 931
+Workflow note: this is a full catalog import file with only the target location New Quantity column seeded from the live Square export.
+Workflow note: unmatched live export rows were left out instead of forced into the new AZCS catalog.
