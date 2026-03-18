@@ -3,9 +3,10 @@ Overlap review file: C:\Codex\AZCS Inventory\outputs\square_master_inventory_ove
 Enrichment audit file: C:\Codex\AZCS Inventory\outputs\product_enrichment_audit.csv
 Source items normalized: 9979
 Rows included in Square import: 9979
-Rows sent to review: 50
+Rows sent to review: 186
 Duplicate item groups merged into one inventory row: 27
 Rows renamed to avoid duplicate item names: 47
+Rows with clarified customer-facing names: 667
 Generated replacement SKUs: 520
 Duplicate rows skipped inside the same source file: 1
 GTINs retained from source files: 2664

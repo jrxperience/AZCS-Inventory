@@ -49,6 +49,71 @@ MONEY_RE = re.compile(r"\$?\s*\d[\d,\s]*\.\d{2}")
 GTIN_LENGTHS = {8, 12, 13, 14}
 GENERIC_CATEGORY_SEGMENTS = {"EQUIPMENT"}
 GENERIC_SEO_WORDS = {"AND", "THE", "FOR", "WITH", "KIT", "PACK", "CASE", "REGULAR"}
+CUSTOMER_NAME_DIFF_STOPWORDS = {
+    "A",
+    "AN",
+    "AND",
+    "ASSEMBLED",
+    "CHANGE",
+    "CODED",
+    "COLOR",
+    "COMPLETE",
+    "ENDS",
+    "FLOW",
+    "FOR",
+    "GP",
+    "GP#",
+    "HIGH",
+    "HOLDER",
+    "HYDRO",
+    "JROD",
+    "NOZZLE",
+    "NOZZLES",
+    "NUMBER",
+    "PRESSURE",
+    "PRODUCT",
+    "PRODUCTS",
+    "QUICK",
+    "SPRAY",
+    "SYSTEM",
+    "TIP",
+    "TIPS",
+    "THE",
+    "W",
+    "WITH",
+}
+CUSTOMER_NAME_MATERIAL_HINTS = (
+    "Stainless Steel",
+    "Aluminum",
+    "Brass",
+    "Double Wire",
+    "Single Wire",
+    "RTU",
+    "Cold Water Seals",
+    "Hot Water Seals",
+)
+CUSTOMER_NAME_COLOR_HINTS = (
+    "Yellow",
+    "Green",
+    "White",
+    "Red",
+    "Black",
+    "Blue",
+    "Orange",
+    "Gray",
+    "Grey",
+    "Tan",
+    "Fieldstone",
+    "Barnacle",
+    "Brick Red",
+    "Canyon Brown",
+    "Coral Dust",
+    "Desert Gold",
+    "English Walnut",
+    "Granite Gray",
+    "Red Clay",
+    "Slate Black",
+)
 WEIGHT_PRECISION = Decimal("0.001")
 GRAMS_PER_POUND = Decimal("453.59237")
 SHOPIFY_VENDOR_SOURCES = {
@@ -1295,6 +1360,133 @@ def extract_size_hints(value: str) -> set[str]:
 def extract_case_suffix_from_name(value: str) -> str:
     match = re.search(r"(\[Case[^\]]+\])", value, re.I)
     return clean_text(match.group(1)) if match else ""
+
+
+def tokenize_name_parts(value: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9./\"'-]+", clean_text(value))
+
+
+def token_is_code_like(value: str) -> bool:
+    cleaned = clean_text(value).upper()
+    return len(cleaned) >= 4 and any(char.isalpha() for char in cleaned) and any(char.isdigit() for char in cleaned)
+
+
+def build_customer_name_difference(base_name: str, item_name: str) -> str:
+    base_counts = Counter(normalize_name(token) for token in tokenize_name_parts(base_name) if normalize_name(token))
+    difference_tokens: list[str] = []
+    for token in tokenize_name_parts(item_name):
+        key = normalize_name(token)
+        if not key:
+            continue
+        if base_counts.get(key, 0):
+            base_counts[key] -= 1
+            continue
+        difference_tokens.append(token)
+
+    filtered_tokens: list[str] = []
+    for token in difference_tokens:
+        upper = clean_text(token).upper()
+        if not upper or upper in CUSTOMER_NAME_DIFF_STOPWORDS:
+            continue
+        filtered_tokens.append(clean_text(token))
+
+    if not filtered_tokens:
+        return ""
+
+    descriptive_tokens = [token for token in filtered_tokens if not token_is_code_like(token)]
+    if descriptive_tokens:
+        filtered_tokens = descriptive_tokens
+
+    return trim_words(" ".join(filtered_tokens), 42)
+
+
+def add_customer_name_hint(hints: list[str], base_name: str, hint: str) -> None:
+    cleaned = clean_text(hint)
+    if not cleaned:
+        return
+    hint_key = normalize_name(cleaned)
+    if not hint_key or hint_key in normalize_name(base_name):
+        return
+    if any(normalize_name(existing) == hint_key for existing in hints):
+        return
+    hints.append(cleaned)
+
+
+def build_customer_name_hints(item: SourceItem, base_name: str) -> list[str]:
+    hints: list[str] = []
+    item_name = clean_text(item.item_name)
+
+    difference = build_customer_name_difference(base_name, item_name)
+    if difference:
+        add_customer_name_hint(hints, base_name, difference)
+
+    for pattern in (
+        r"\b\d+(?:\.\d+)?\s*GPM\b",
+        r"\b\d+(?:,\d+)?\s*PSI\b",
+        r"\b\d+(?:\.\d+)?\s*Degree\b",
+        r"\b\d+(?:\.\d+)?\s*(?:Volt|V)\b",
+        r"\b\d+\s*Phase\b",
+        r"\b\d+(?:/\d+)?(?:\.\d+)?\s*(?:Inch(?:es)?|In\b)\b",
+        r"\b\d+(?:/\d+)?(?:\.\d+)?['\"]",
+        r"\b\d+(?:\.\d+)?\s*(?:Ft|Foot|Feet)\b",
+        r"\b\d+(?:\.\d+)?\s*(?:Gallon|Gal|lb|lbs|oz)\b",
+    ):
+        for match in re.finditer(pattern, item_name, flags=re.I):
+            add_customer_name_hint(hints, base_name, match.group(0))
+
+    item_name_upper = item_name.upper()
+    for phrase in CUSTOMER_NAME_MATERIAL_HINTS + CUSTOMER_NAME_COLOR_HINTS:
+        if phrase.upper() in item_name_upper:
+            add_customer_name_hint(hints, base_name, phrase)
+
+    case_pack = extract_case_pack(item.description) or extract_case_suffix_from_name(item.item_name)
+    if case_pack:
+        case_hint = re.sub(r"[\[\]]", "", clean_text(case_pack))
+        if case_hint and not case_hint.upper().startswith("CASE"):
+            case_hint = f"Case {case_hint}"
+        add_customer_name_hint(hints, base_name, case_hint)
+
+    gtin = valid_gtin(item.gtin)
+    if gtin:
+        add_customer_name_hint(hints, base_name, f"GTIN {gtin}")
+
+    sku = clean_text(item.sku or item.vendor_code)
+    if sku:
+        add_customer_name_hint(hints, base_name, f"SKU {sku}")
+
+    return hints
+
+
+def build_customer_name_candidates(item: SourceItem, base_name: str) -> list[str]:
+    candidates: list[str] = []
+    hints = build_customer_name_hints(item, base_name)
+
+    def add_candidate(value: str) -> None:
+        cleaned = clean_text(value)
+        if not cleaned:
+            return
+        key = normalize_name(cleaned)
+        if not key:
+            return
+        if any(normalize_name(existing) == key for existing in candidates):
+            return
+        candidates.append(cleaned)
+
+    for hint in hints:
+        add_candidate(f"{base_name} - {hint}")
+
+    for width in range(2, min(4, len(hints)) + 1):
+        add_candidate(f"{base_name} - {' - '.join(hints[:width])}")
+
+    fallback_name = seo_keyword_base(item.item_name)
+    if normalize_name(fallback_name) != normalize_name(base_name):
+        add_candidate(fallback_name)
+
+    sku = clean_text(item.sku or item.vendor_code)
+    if sku:
+        add_candidate(f"{base_name} - SKU {sku}")
+
+    return candidates or [base_name]
 
 
 def jracenstein_similarity_key(value: str) -> str:
@@ -2704,6 +2896,83 @@ def resolve_same_vendor_name_collisions(items: list[SourceItem]) -> tuple[list[S
     return resolved_items, review_issues, merged_groups, renamed_rows
 
 
+def resolve_customer_facing_name_collisions(items: list[SourceItem]) -> tuple[list[ReviewIssue], int]:
+    original_names = {id(item): product_display_name(item) for item in items}
+    groups: dict[str, list[SourceItem]] = defaultdict(list)
+    for item in items:
+        groups[normalize_name(product_display_name(item))].append(item)
+
+    review_issues: list[ReviewIssue] = []
+
+    for name_key, group_items in groups.items():
+        if not name_key or len(group_items) == 1:
+            continue
+
+        candidate_lists = {
+            id(item): build_customer_name_candidates(item, original_names[id(item)])
+            for item in group_items
+        }
+        candidate_index = {id(item): 0 for item in group_items}
+
+        while True:
+            current_names = {
+                id(item): candidate_lists[id(item)][candidate_index[id(item)]]
+                for item in group_items
+            }
+            collision_groups: dict[str, list[SourceItem]] = defaultdict(list)
+            for item in group_items:
+                collision_groups[normalize_name(current_names[id(item)])].append(item)
+            collisions = [members for members in collision_groups.values() if len(members) > 1]
+            if not collisions:
+                break
+
+            progressed = False
+            for members in collisions:
+                for item in members:
+                    item_id = id(item)
+                    if candidate_index[item_id] < len(candidate_lists[item_id]) - 1:
+                        candidate_index[item_id] += 1
+                        progressed = True
+            if progressed:
+                continue
+
+            for members in collisions:
+                for position, item in enumerate(sorted(members, key=lambda candidate: (candidate.vendor, candidate.sku, candidate.item_name)), start=1):
+                    item_id = id(item)
+                    fallback_sku = clean_text(item.sku or item.vendor_code) or str(position)
+                    candidate_lists[item_id].append(f"{current_names[item_id]} - SKU {fallback_sku}")
+                    candidate_index[item_id] = len(candidate_lists[item_id]) - 1
+
+        for item in group_items:
+            chosen_name = candidate_lists[id(item)][candidate_index[id(item)]]
+            if clean_text(chosen_name) != clean_text(product_display_name(item)):
+                item.customer_facing_name_override = chosen_name
+
+        review_issues.append(
+            ReviewIssue(
+                issue_type="renamed_customer_facing_duplicate",
+                vendor=group_items[0].vendor,
+                source_file=group_items[0].source_file,
+                item_name=original_names[id(group_items[0])],
+                category=group_items[0].category,
+                details="Clarified duplicate customer-facing names by appending distinguishing spec, pack, material, or SKU labels.",
+            )
+        )
+
+    final_groups: dict[str, list[SourceItem]] = defaultdict(list)
+    for item in items:
+        final_groups[normalize_name(product_display_name(item))].append(item)
+    for name_key, group_items in final_groups.items():
+        if not name_key or len(group_items) == 1:
+            continue
+        for position, item in enumerate(sorted(group_items, key=lambda candidate: (candidate.vendor, candidate.sku, candidate.item_name)), start=1):
+            fallback_sku = clean_text(item.sku or item.vendor_code) or str(position)
+            item.customer_facing_name_override = f"{product_display_name(item)} - SKU {fallback_sku}"
+
+    renamed_rows = sum(1 for item in items if clean_text(product_display_name(item)) != clean_text(original_names[id(item)]))
+    return review_issues, renamed_rows
+
+
 def generate_unique_skus(items: list[SourceItem]) -> int:
     used: set[str] = set()
     updated = 0
@@ -2979,6 +3248,7 @@ def summarize(
     skipped_duplicates: int,
     merged_groups: int,
     renamed_rows: int,
+    clarified_customer_names: int,
     retained_gtins: int,
     verified_gtins_added: int,
     catalog_gtins_added: int,
@@ -3001,6 +3271,7 @@ def summarize(
         f"Rows sent to review: {len(review_rows)}",
         f"Duplicate item groups merged into one inventory row: {merged_groups}",
         f"Rows renamed to avoid duplicate item names: {renamed_rows}",
+        f"Rows with clarified customer-facing names: {clarified_customer_names}",
         f"Generated replacement SKUs: {generated_skus}",
         f"Duplicate rows skipped inside the same source file: {skipped_duplicates}",
         f"GTINs retained from source files: {retained_gtins}",
@@ -3069,11 +3340,12 @@ def main() -> None:
     website_detail_counts.update(direct_detail_counts)
     website_notes.extend(direct_notes)
     image_audit_entries, image_match_counts, image_notes = apply_local_image_matches(source_items)
+    customer_name_issues, clarified_customer_names = resolve_customer_facing_name_collisions(source_items)
 
     master_rows = [build_square_row(item, square_headers) for item in source_items]
     permalinks_generated = assign_unique_permalinks(master_rows)
     image_database_fieldnames, image_database_rows = build_image_database_rows(source_items, master_rows)
-    review_rows = build_review_rows(merge_issues + rename_issues + parser_issues)
+    review_rows = build_review_rows(merge_issues + rename_issues + customer_name_issues + parser_issues)
     write_enrichment_audit_csv(
         ENRICHMENT_AUDIT_OUT_PATH,
         verified_audit_entries + catalog_audit_entries + website_audit_entries + direct_audit_entries,
@@ -3094,6 +3366,7 @@ def main() -> None:
         skipped_duplicates=skipped_duplicates,
         merged_groups=merged_groups + same_vendor_merged_groups,
         renamed_rows=renamed_rows,
+        clarified_customer_names=clarified_customer_names,
         retained_gtins=retained_gtins,
         verified_gtins_added=sum(1 for entry in verified_audit_entries if entry.field == "GTIN"),
         catalog_gtins_added=sum(1 for entry in catalog_audit_entries if entry.field == "GTIN"),
