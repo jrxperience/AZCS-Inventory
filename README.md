@@ -11,6 +11,10 @@ This repo now supports eight repeatable jobs:
 7. Build an after-hours receiving import from a fresh Square export plus the current delivery batch.
 8. Run all of the main workflows from a local dashboard with cleaner latest/run folders.
 
+There is also one full validation runner for the main catalog-to-upload flow:
+
+9. Rebuild the full catalog workflow and validate the final Square upload package in one pass.
+
 ## Folder layout
 
 - `inputs/price_lists/`
@@ -98,6 +102,29 @@ Current dedupe behavior:
 - Supplemental manual catalog rows are loaded from `inputs/manual_catalog_items.csv` before dedupe, so missing but confirmed items can be kept in the same repeatable workflow.
 - Trident Hurricane kit names are normalized to unit-facing names like `Hurricane Cat 5 Full Kit` and `Hurricane Cat 5 Half Kit`; the dealer-sheet pallet counts are preserved in notes/descriptions instead of the visible item name.
 - Local image matching is enabled for the `Images/` folder. Image paths are added to the internal inventory database exports and image-audit file, but not to the Square import file because Square's item import template does not include image columns.
+
+## Run the full catalog-to-upload workflow
+
+Run:
+
+```powershell
+python run_inventory_workflow.py
+```
+
+This reruns:
+
+1. `build_master_inventory.py`
+2. `build_sales_match_audit.py`
+3. `build_pricing_recommendations.py`
+4. `build_baseline_square_inventory_import.py`
+
+It validates the final upload file at:
+
+- [`square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.csv`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.csv)
+
+And writes a quick validation report here:
+
+- [`square_ready/BASELINE_CURRENT/WORKFLOW_VALIDATION.txt`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/WORKFLOW_VALIDATION.txt)
 
 ## Track deliveries, stock, and selling prices
 

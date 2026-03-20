@@ -6,19 +6,19 @@ Square strategic price update file: C:\Codex\AZCS Inventory\outputs\square_catal
 Issues file: C:\Codex\AZCS Inventory\outputs\pricing_strategy_issues.csv
 Price update files processed: 0
 Pricing override files processed: 0
-Sales signal rows loaded: 181
-Rows with usable cost: 9974
-Rows with current selling price: 2867
-Rows with sales history: 174
-Rows with trusted sales signals: 154
-Rows raised by realized sales anchor: 54
+Sales signal rows loaded: 207
+Rows with usable cost: 10390
+Rows with current selling price: 3283
+Rows with sales history: 197
+Rows with trusted sales signals: 175
+Rows raised by realized sales anchor: 58
 Rows with missing price filled: 7107
-Rows raised from low margin: 374
-Rows raised from trusted sales history: 24
-Rows kept at current price: 2469
+Rows raised from low margin: 377
+Rows raised from trusted sales history: 34
+Rows kept at current price: 2872
 Rows using manual overrides: 0
-Rows preserved above target band: 275
-Average current gross margin on already-priced rows: 28.0%
+Rows preserved above target band: 277
+Average current gross margin on already-priced rows: 28.2%
 Average suggested gross margin across all costed rows: 31.3%
 Assumption: the pricing engine targets roughly 30% gross margin across the full catalog, not a flat 30% markup.
 Rule summary: lower-cost items carry higher markup percentages, large equipment carries lower margin targets, chemicals / premium tools / bundles get higher strategic targets than commodity parts, and trusted sales history can tighten the target or support a higher price anchor.

@@ -1,24 +1,34 @@
 from __future__ import annotations
 
+import argparse
 import csv
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
+import shutil
+import re
 
 
 BASE_DIR = Path(__file__).resolve().parent
 MASTER_PATH = BASE_DIR / "outputs" / "square_master_inventory.csv"
-EXPORT_PATH = Path(r"C:\Users\JRAZC\Downloads\MLT3E97CHP443_catalog-2026-03-20-2210.csv")
-TEMPLATE_PATH = Path(r"C:\Users\JRAZC\Downloads\MLT3E97CHP443_catalog-2026-03-20-2039.csv")
 TO_IMPORT_DIR = BASE_DIR / "to_import"
-PACKAGE_DIR = BASE_DIR / "square_ready" / "BASELINE_2026-03-20_1543"
-OUTPUT_NAME = "BASELINE_SQUARE_INVENTORY_IMPORT_2026-03-20_1543.csv"
-ARCHIVE_NAME = "BASELINE_DUPLICATE_ARCHIVE_2026-03-20_1543.csv"
-CATEGORY_PLAN_NAME = "BASELINE_CATEGORY_PLAN_2026-03-20_1543.csv"
-SUMMARY_NAME = "BASELINE_SUMMARY_2026-03-20_1543.txt"
+SQUARE_READY_DIR = BASE_DIR / "square_ready"
+CURRENT_PACKAGE_DIR = SQUARE_READY_DIR / "BASELINE_CURRENT"
+DEFAULT_TEMPLATE_PATH = BASE_DIR / "Square Import Template.csv"
+OUTPUT_NAME = "BASELINE_SQUARE_INVENTORY_IMPORT.csv"
+ARCHIVE_NAME = "BASELINE_DUPLICATE_ARCHIVE.csv"
+CATEGORY_PLAN_NAME = "BASELINE_CATEGORY_PLAN.csv"
+SUMMARY_NAME = "BASELINE_SUMMARY.txt"
 README_NAME = "README.txt"
 PRIMARY_UPLOAD_NAME = "UPLOAD_THIS_TO_SQUARE.csv"
 RANGE_SIZE = 200
 SEMANTIC_FLAT_VENDORS = {"Barrens", "MPWSR"}
+EXPORT_SEARCH_DIRS = (
+    Path.home() / "Downloads",
+    BASE_DIR / "inputs" / "square_exports",
+)
+EXPORT_GLOB = "*catalog-*.csv"
+MIN_REAL_EXPORT_ROWS = 100
 
 LOCATION_PREFIXES = (
     "Enabled ",
@@ -81,6 +91,64 @@ def read_records(path: Path) -> tuple[list[list[str]], int, list[str], list[dict
     headers = [clean_text(cell) for cell in rows[header_index]]
     records = rows_to_dicts(headers, rows[header_index + 1 :])
     return rows, header_index, headers, records
+
+
+def count_real_export_rows(path: Path) -> int:
+    try:
+        _, _, headers, records = read_records(path)
+    except Exception:
+        return 0
+    if "Token" not in headers or "Item Name" not in headers:
+        return 0
+    return sum(1 for record in records if clean_text(record.get("Item Name")))
+
+
+def find_latest_real_export() -> Path:
+    candidates: list[tuple[float, int, Path]] = []
+    seen: set[Path] = set()
+    for folder in EXPORT_SEARCH_DIRS:
+        if not folder.exists():
+            continue
+        for path in folder.glob(EXPORT_GLOB):
+            resolved = path.resolve()
+            if resolved in seen or not path.is_file():
+                continue
+            seen.add(resolved)
+            row_count = count_real_export_rows(path)
+            if row_count < MIN_REAL_EXPORT_ROWS:
+                continue
+            candidates.append((path.stat().st_mtime, row_count, path))
+    if not candidates:
+        search_locations = ", ".join(str(path) for path in EXPORT_SEARCH_DIRS)
+        raise FileNotFoundError(f"Could not find a real Square export CSV in: {search_locations}")
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
+def derive_run_tag(export_path: Path) -> str:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})-(\d{4})$", export_path.stem)
+    if match:
+        return f"{match.group(1)}_{match.group(2)}"
+    return datetime.now().strftime("%Y-%m-%d_%H%M")
+
+
+def clear_directory(path: Path) -> None:
+    if not path.exists():
+        return
+    for child in path.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def trim_old_baseline_backups(keep: int = 3) -> None:
+    matches = sorted(
+        (path for path in TO_IMPORT_DIR.glob("inventory-baseline_*.csv") if path.is_file() and path.name != "inventory-baseline_current.csv"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in matches[keep:]:
+        path.unlink()
 
 
 def normalize_sku(value: str) -> str:
@@ -733,16 +801,30 @@ def build_archive_row(record: dict[str, str], template_headers: list[str]) -> di
     return archive_row
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build the baseline Square inventory import package.")
+    parser.add_argument("--export", dest="export_path", help="Optional path to the current Square export CSV.")
+    parser.add_argument("--template", dest="template_path", help="Optional path to the Square import template CSV.")
+    parser.add_argument("--run-tag", dest="run_tag", help="Optional tag for the dated backup file.")
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    export_path = Path(args.export_path).expanduser() if args.export_path else find_latest_real_export()
+    template_path = Path(args.template_path).expanduser() if args.template_path else DEFAULT_TEMPLATE_PATH
+    run_tag = clean_text(args.run_tag) or derive_run_tag(export_path)
+    package_dir = CURRENT_PACKAGE_DIR
+
     if not MASTER_PATH.exists():
         raise FileNotFoundError(f"Missing master inventory: {MASTER_PATH}")
-    if not EXPORT_PATH.exists():
-        raise FileNotFoundError(f"Missing Square export: {EXPORT_PATH}")
-    if not TEMPLATE_PATH.exists():
-        raise FileNotFoundError(f"Missing Square template: {TEMPLATE_PATH}")
+    if not export_path.exists():
+        raise FileNotFoundError(f"Missing Square export: {export_path}")
+    if not template_path.exists():
+        raise FileNotFoundError(f"Missing Square template: {template_path}")
 
-    template_rows, template_header_index, template_headers, _ = read_records(TEMPLATE_PATH)
-    _, _, _, export_records = read_records(EXPORT_PATH)
+    template_rows, template_header_index, template_headers, _ = read_records(template_path)
+    _, _, _, export_records = read_records(export_path)
     _, _, _, master_records = read_records(MASTER_PATH)
     managed_vendors = {
         normalize_vendor(vendor_for_record(record))
@@ -830,18 +912,23 @@ def main() -> None:
 
     template_prefix_rows = template_rows[:template_header_index]
 
-    package_import_path = PACKAGE_DIR / OUTPUT_NAME
-    primary_upload_path = PACKAGE_DIR / PRIMARY_UPLOAD_NAME
-    backup_import_path = TO_IMPORT_DIR / "inventory-baseline_2026-03-20_1543.csv"
-    archive_path = PACKAGE_DIR / ARCHIVE_NAME
-    category_plan_path = PACKAGE_DIR / CATEGORY_PLAN_NAME
-    duplicate_review_path = PACKAGE_DIR / "BASELINE_DUPLICATE_REVIEW_2026-03-20_1543.csv"
-    summary_path = PACKAGE_DIR / SUMMARY_NAME
-    readme_path = PACKAGE_DIR / README_NAME
+    package_dir.mkdir(parents=True, exist_ok=True)
+    clear_directory(package_dir)
+
+    package_import_path = package_dir / OUTPUT_NAME
+    primary_upload_path = package_dir / PRIMARY_UPLOAD_NAME
+    backup_import_path = TO_IMPORT_DIR / f"inventory-baseline_{run_tag}.csv"
+    current_backup_path = TO_IMPORT_DIR / "inventory-baseline_current.csv"
+    archive_path = package_dir / ARCHIVE_NAME
+    category_plan_path = package_dir / CATEGORY_PLAN_NAME
+    duplicate_review_path = package_dir / "BASELINE_DUPLICATE_REVIEW.csv"
+    summary_path = package_dir / SUMMARY_NAME
+    readme_path = package_dir / README_NAME
 
     write_csv(package_import_path, template_headers, full_import_rows, template_prefix_rows)
     write_csv(primary_upload_path, template_headers, full_import_rows, template_prefix_rows)
     write_csv(backup_import_path, template_headers, full_import_rows, template_prefix_rows)
+    write_csv(current_backup_path, template_headers, full_import_rows, template_prefix_rows)
     write_csv(
         archive_path,
         template_headers,
@@ -856,9 +943,10 @@ def main() -> None:
     )
 
     summary_lines = [
-        f"Template: {TEMPLATE_PATH}",
-        f"Current Square export: {EXPORT_PATH}",
+        f"Template: {template_path}",
+        f"Current Square export: {export_path}",
         f"Master inventory source: {MASTER_PATH}",
+        f"Run tag: {run_tag}",
         f"Final active rows: {len(active_rows)}",
         f"Archive rows for duplicate tokens: {len(archive_rows)}",
         f"Rows in full import file: {len(full_import_rows)}",
@@ -875,13 +963,14 @@ def main() -> None:
         "\n".join(
             [
                 "Use UPLOAD_THIS_TO_SQUARE.csv for the next Square baseline import.",
-                "BASELINE_DUPLICATE_ARCHIVE_2026-03-20_1543.csv is the archive-only slice from the same import.",
-                "BASELINE_DUPLICATE_REVIEW_2026-03-20_1543.csv lists the duplicate/current-token cleanup decisions.",
-                "BASELINE_CATEGORY_PLAN_2026-03-20_1543.csv lists the new <=200-item category chunks.",
+                "BASELINE_DUPLICATE_ARCHIVE.csv is the archive-only slice from the same import.",
+                "BASELINE_DUPLICATE_REVIEW.csv lists the duplicate/current-token cleanup decisions.",
+                "BASELINE_CATEGORY_PLAN.csv lists the new <=200-item category chunks.",
             ]
         ),
         encoding="utf-8",
     )
+    trim_old_baseline_backups()
 
     print("\n".join(summary_lines))
 

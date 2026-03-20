@@ -1,0 +1,9 @@
+Upload file: C:\Codex\AZCS Inventory\square_ready\BASELINE_CURRENT\UPLOAD_THIS_TO_SQUARE.csv
+Template prefix rows: 4
+Total rows: 11634
+Active rows: 10761
+Archive rows: 873
+Duplicate active SKUs: 0
+Duplicate active item names: 2
+Max deepest category size: 200
+Tucker active rows: 417

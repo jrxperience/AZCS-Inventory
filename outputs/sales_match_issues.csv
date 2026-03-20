@@ -1,2 +1,2 @@
 ﻿source_file,row_number,issue_type,sales_sku,details
-2026-03-19-catalog-corrections.csv,3,unknown_master_sku,177942N,Override Master SKU 'RCCT-7710TU-7' does not exist in the master inventory.
+2026-03-19-catalog-corrections.csv,4,unknown_master_sku,838290Z,Override Master SKU 'h2proWP' does not exist in the master inventory.

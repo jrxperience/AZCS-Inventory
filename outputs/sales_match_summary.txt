@@ -7,12 +7,12 @@ Sales catalog signals file: C:\Codex\AZCS Inventory\outputs\sales_catalog_signal
 Issues file: C:\Codex\AZCS Inventory\outputs\sales_match_issues.csv
 Unique sales items analyzed: 532
 Total sales lines analyzed: 2786
-Accepted matches: 197
-Review rows: 333
-Matched sales lines: 1554
-Matched net sales: 500427.77
+Accepted matches: 224
+Review rows: 306
+Matched sales lines: 1629
+Matched net sales: 525281.90
 Total net sales: 615843.68
-Matched sales line coverage: 55.77889447236180904522613065%
-Matched net sales coverage: 81.25889511442254307131965696%
+Matched sales line coverage: 58.47092605886575735821966978%
+Matched net sales coverage: 85.29468062414799807639497088%
 Accepted match types: manual_override, exact_sku, exact_gtin, exact_name, exact_base_name, exact_base_name_pack, exact_base_code, exact_base_code_pack, exact_code, high_confidence_fuzzy.
 Review rows include weaker fuzzy candidates and truly unmatched items so they can be pinned with manual overrides later.
