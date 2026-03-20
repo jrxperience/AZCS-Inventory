@@ -1,59 +1,70 @@
 Square master inventory: C:\Codex\AZCS Inventory\outputs\square_master_inventory.csv
 Overlap review file: C:\Codex\AZCS Inventory\outputs\square_master_inventory_overlap_review.csv
 Enrichment audit file: C:\Codex\AZCS Inventory\outputs\product_enrichment_audit.csv
-Source items normalized: 9979
-Rows included in Square import: 9979
-Rows sent to review: 186
-Duplicate item groups merged into one inventory row: 27
+Source items normalized: 10406
+Rows included in Square import: 10406
+Rows sent to review: 195
+Duplicate item groups merged into one inventory row: 28
 Rows renamed to avoid duplicate item names: 47
-Rows with clarified customer-facing names: 667
-Generated replacement SKUs: 520
+Rows with clarified customer-facing names: 684
+Generated replacement SKUs: 523
 Duplicate rows skipped inside the same source file: 1
 GTINs retained from source files: 2664
 GTINs added from verified overrides: 1
 GTINs added from catalog cross-reference: 59
-Rows still missing GTIN: 7020
-SEO titles generated: 9979
-Permalinks generated: 9979
-Vendor website row matches applied: 5971
+Rows still missing GTIN: 7447
+SEO titles generated: 10406
+Permalinks generated: 10406
+Vendor website row matches applied: 6273
 Vendor website GTINs applied: 235
-Vendor website descriptions applied: 1956
-Vendor website weights applied: 427
-Rows with local product images matched: 1912
+Vendor website descriptions applied: 2244
+Vendor website weights applied: 691
+Vendor website images applied: 5917
+Rows with local product images matched: 2320
 Counts by vendor:
+  AZCS: 1
   BE: 2523
   Barrens: 4345
   EacoChem: 102
+  EnviroBioCleaner: 2
+  Front9: 5
   INSECO: 240
   JRacenstein: 324
-  MPWSR: 2413
+  MPWSR: 2414
+  RCCT: 1
   Trident: 32
+  Tucker: 417
 Vendor website matches:
   Barrens: 3498
   EacoChem: 97
   GoldAssassin: 2
   JRacenstein: 236
-  MPWSR: 2123
+  MPWSR: 2124
   Trident: 15
+  Tucker: 301
 Notes:
   - Default Unit Cost uses dealer/distributor pricing when available.
   - Price uses list/direct/retail pricing when the source file provided it.
   - Items without a selling price were imported as Stockable=Y and Sellable=N.
   - GTIN values only populate when they pass a checksum check or come from a verified manual override.
   - SEO fields and permalinks are generated automatically from the cleaned catalog data.
-  - Local product images are tracked in the internal image database export, not the Square import file.
-  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.
+  - Product images are tracked in the internal image database export, not the Square import file.
+  - MPWSR, Barens, and Tucker website enrichments only apply on exact SKU matches or unique exact-title matches.
   - JRacenstein matches use exact live product or variant code matches from the Storefront catalog, with size/name checks only to break ties. Trident and EacoChem matches use exact base product names plus the existing pack suffix.
-  - MPWSR website enrichment used 1797 live products and matched 2123 catalog rows.
+  - MPWSR website enrichment used 1798 live products and matched 2124 catalog rows.
   - Barrens website enrichment used 3607 live products and matched 3498 catalog rows.
+  - Tucker website enrichment used 398 live products and matched 301 catalog rows.
   - JRacenstein website enrichment matched 236 exact code rows.
   - Trident website enrichment matched 15 catalog rows.
   - EacoChem website enrichment matched 97 catalog rows.
   - Gold Assassin website enrichment matched 2 exact SKU rows. Left 1 conflicting existing weights unchanged.
   - Local image matches from J.racenstein images: 204
   - Local image matches from Manatee images: 1693
-  - Local image matches from Trident images/media: 15
+  - Local image matches from Trident images/media: 17
+  - Local image matches from Tucker images: 406
+  - Tucker images extracted from tucker list 2.docx: 417.
   - JR local image matches applied: 204.
-  - Trident local image matches applied: 15.
+  - Tucker local image matches applied: 406.
+  - Trident local image matches applied: 17.
   - Manatee local image matches applied: 1693.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.

@@ -1,6 +1,6 @@
 # AZCS Inventory Workflow
 
-This repo now supports seven repeatable jobs:
+This repo now supports eight repeatable jobs:
 
 1. Rebuild the master Square catalog from vendor price lists.
 2. Track deliveries and manual stock adjustments by SKU.
@@ -15,6 +15,8 @@ This repo now supports seven repeatable jobs:
 
 - `inputs/price_lists/`
   Put vendor price lists here. The inventory builder uses the newest matching file for each vendor pattern.
+- `inputs/manual_catalog_items.csv`
+  Optional supplemental catalog rows for items confirmed from sales history or vendor websites but missing from the current price-list feeds. Use [`templates/manual_catalog_items_template.csv`](/C:/Codex/AZCS%20Inventory/templates/manual_catalog_items_template.csv).
 - `inputs/deliveries/`
   Put one or more delivery CSV or XLSX files here. Use [`templates/delivery_log_template.csv`](/C:/Codex/AZCS%20Inventory/templates/delivery_log_template.csv) as the starting format. The receiving workflow can match by `SKU`, `Vendor Code`, `GTIN`, or exact item name.
 - `inputs/adjustments/`
@@ -93,6 +95,8 @@ Current dedupe behavior:
 - JRacenstein enrichment now uses the live Storefront catalog for exact product or variant code matches. When a code match is exact, it can fill customer-facing names, descriptions, GTINs, weights, and stronger permalinks.
 - Gold Assassin enrichment is enabled for exact live manufacturer SKUs found in the catalog. It can tighten names/descriptions/permalinks and fill missing weights when the manufacturer site publishes them clearly.
 - Direct product-page enrichment is also enabled for Trident and EaCo Chem. It uses exact base product-name matches and preserves the existing pack-size suffix in your catalog rows.
+- Supplemental manual catalog rows are loaded from `inputs/manual_catalog_items.csv` before dedupe, so missing but confirmed items can be kept in the same repeatable workflow.
+- Trident Hurricane kit names are normalized to unit-facing names like `Hurricane Cat 5 Full Kit` and `Hurricane Cat 5 Half Kit`; the dealer-sheet pallet counts are preserved in notes/descriptions instead of the visible item name.
 - Local image matching is enabled for the `Images/` folder. Image paths are added to the internal inventory database exports and image-audit file, but not to the Square import file because Square's item import template does not include image columns.
 
 ## Track deliveries, stock, and selling prices
@@ -202,6 +206,7 @@ Sales-match behavior:
 - Strong fuzzy matches are accepted only when the score is high enough and clearly better than the next candidate.
 - Weaker fuzzy rows are pushed into the review file instead of being forced into the catalog.
 - Manual overrides let you pin odd Square-only SKUs to the right catalog SKU one time and reuse that fix later.
+- Service and shipping rows are excluded from inventory matching so they do not keep polluting the review file.
 
 ## Recommended day-to-day process
 

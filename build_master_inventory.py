@@ -10,10 +10,13 @@ from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
 
 import pdfplumber
 import requests
 from bs4 import BeautifulSoup
+from docx import Document
 from openpyxl import Workbook, load_workbook
 from pypdf import PdfReader
 
@@ -31,6 +34,7 @@ LEGACY_TEMPLATE_XLSX_PATH = BASE_DIR / "IMPORT TEMPLATE.xlsx"
 ALT_LEGACY_TEMPLATE_XLSX_PATH = BASE_DIR / "Square Import Template.xlsx"
 LEGACY_TEMPLATE_PATH = BASE_DIR / "Square Import Template.csv"
 VERIFIED_ENRICHMENT_PATH = INPUT_DIR / "verified_product_enrichment.csv"
+MANUAL_CATALOG_ITEMS_PATH = INPUT_DIR / "manual_catalog_items.csv"
 
 MASTER_OUT_PATH = OUTPUT_DIR / "square_master_inventory.csv"
 REVIEW_OUT_PATH = OUTPUT_DIR / "square_master_inventory_overlap_review.csv"
@@ -42,6 +46,7 @@ IMAGE_AUDIT_OUT_PATH = OUTPUT_DIR / "product_image_match_audit.csv"
 IMAGE_DIR = BASE_DIR / "Images"
 JRACENSTEIN_IMAGE_DIR = IMAGE_DIR / "J.racenstein images"
 MANATEE_IMAGE_DIR = IMAGE_DIR / "Manatee images"
+TUCKER_IMAGE_DIR = IMAGE_DIR / "Tucker images"
 TRIDENT_IMAGE_DIR = IMAGE_DIR / "Trident images" / "media"
 
 CENT = Decimal("0.01")
@@ -124,6 +129,10 @@ SHOPIFY_VENDOR_SOURCES = {
     "Barrens": {
         "feed_url": "https://www.barens.com/products.json",
         "product_base": "https://www.barens.com/products/",
+    },
+    "Tucker": {
+        "feed_url": "https://tuckerusa.com/products.json",
+        "product_base": "https://tuckerusa.com/products/",
     },
 }
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AZCSInventoryBot/1.0)"}
@@ -252,6 +261,8 @@ class SourceItem:
     image_source_folder: str = ""
     image_lookup_tokens: list[str] = field(default_factory=list)
     image_lookup_slug: str = ""
+    website_image_url: str = ""
+    website_image_urls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -482,6 +493,33 @@ def category_tail(value: str) -> str:
         if segment.upper() not in GENERIC_CATEGORY_SEGMENTS:
             return segment
     return segments[-1] if segments else ""
+
+
+TUCKER_INTERNAL_SKU_OVERRIDES: dict[str, dict[str, object]] = {
+    "10041-SS": {
+        "sku": "H2PROWP",
+        "item_name": "Tucker H2Pro WP",
+        "customer_facing_name": "Tucker H2Pro WP",
+        "default_unit_cost": Decimal("2869.30"),
+        "price": Decimal("3975.00"),
+        "category": "Pure Water Systems",
+        "permalink": "tucker-h2pro-wp",
+        "notes": [
+            "Internal AZCS SKU mapped from Tucker official variant 10041-SS.",
+            "Default Unit Cost and Price use the current AZCS item library values you supplied.",
+        ],
+    },
+    "T-CART-RIVAL-V2": {
+        "sku": "T-CART-RIVAL",
+        "item_name": "Tucker Rival RO/DI Cart",
+        "customer_facing_name": "Tucker Rival RO/DI Cart",
+        "category": "Pure Water Systems",
+        "permalink": "tucker-rival-ro-di-cart",
+        "notes": [
+            "Internal AZCS SKU mapped from Tucker official variant T-CART-RIVAL-V2.",
+        ],
+    },
+}
 
 
 def seo_keyword_base(item_name: str) -> str:
@@ -763,6 +801,169 @@ def parse_jracenstein(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
     return items, []
 
 
+def clean_tucker_docx_name(name: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
+    cleaned = clean_text(name)
+    if cleaned.startswith("(NEEDS UPDATED - SEE NOTES)"):
+        cleaned = clean_text(cleaned.replace("(NEEDS UPDATED - SEE NOTES)", "", 1))
+        notes.append("Source sheet flagged this item as needing updated notes.")
+    if cleaned.startswith("*CRATED*"):
+        cleaned = clean_text(cleaned.replace("*CRATED*", "", 1))
+        notes.append("Source sheet marks this item as crated.")
+    cleaned = cleaned.replace("..", " ")
+    cleaned = re.sub(r"(?i)w/\s*", "w/ ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return clean_text(cleaned), notes
+
+
+def infer_tucker_category(item_name: str, sku: str) -> str:
+    text = clean_text(f"{item_name} {sku}").upper()
+    if any(token in text for token in ("H2PRO", "RIVAL", "RO/DI", "RO DI", "DELIVERY SYSTEM", "DI RESIN", "FILTER", "MEMBRANE", "PUMP")):
+        return "Pure Water Systems"
+    if any(token in text for token in ("POLE", "SECTION", "CLAMP")):
+        return "Water Fed Pole Parts"
+    if any(token in text for token in ("BRUSH", "GOOSENECK", "ADAPTER", "HOSE", "FITTING", "VALVE", "ELBOW", "TEE", "GAUGE", "REEL")):
+        return "Accessories"
+    return "Catalog"
+
+
+def parse_tucker_docx(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
+    items: list[SourceItem] = []
+    issues: list[ReviewIssue] = []
+    name_pattern = re.compile(r"^(?P<name>.+?)\((?P<sku>[^()]+)\)\s*$")
+    lines = [clean_text(paragraph.text) for paragraph in Document(path).paragraphs if clean_text(paragraph.text)]
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = name_pattern.match(line)
+        if not match:
+            index += 1
+            continue
+
+        raw_name = clean_text(match.group("name"))
+        official_sku = clean_code(match.group("sku"))
+        price_line = lines[index + 1] if index + 1 < len(lines) else ""
+        prices = extract_money_values(price_line)
+        if not prices:
+            issues.append(
+                ReviewIssue(
+                    issue_type="tucker_price_missing",
+                    vendor="Tucker",
+                    source_file=path.name,
+                    item_name=raw_name,
+                    sku=official_sku,
+                    details=f"Could not find a price line immediately after '{line}'.",
+                )
+            )
+            index += 1
+            continue
+
+        cleaned_name, notes = clean_tucker_docx_name(raw_name)
+        override = TUCKER_INTERNAL_SKU_OVERRIDES.get(official_sku, {})
+        item_name = clean_text(str(override.get("item_name") or cleaned_name))
+        sku = clean_code(override.get("sku") or official_sku)
+        category_name = clean_text(str(override.get("category") or infer_tucker_category(item_name, official_sku)))
+        cost = override.get("default_unit_cost")
+        if not isinstance(cost, Decimal):
+            cost = prices[0] if prices else None
+        price = override.get("price")
+        if not isinstance(price, Decimal):
+            price = prices[1] if len(prices) >= 2 else None
+
+        description = build_description(
+            cleaned_name,
+            f"Official Tucker SKU: {official_sku}",
+            f"Category: {category_name}",
+        )
+        item = SourceItem(
+            vendor="Tucker",
+            source_file=path.name,
+            item_name=item_name,
+            sku=sku,
+            description=description,
+            category=make_category("Tucker", category_name),
+            reporting_category="Tucker",
+            default_unit_cost=cost,
+            price=price,
+            vendor_code=official_sku,
+        )
+
+        customer_name = clean_text(override.get("customer_facing_name") or "")
+        if customer_name:
+            item.customer_facing_name_override = customer_name
+        permalink = clean_text(override.get("permalink") or "")
+        if permalink:
+            item.permalink_override = permalink
+        for note in notes:
+            item.notes.append(note)
+        for note in override.get("notes", []):
+            item.notes.append(clean_text(note))
+        if len(prices) < 2:
+            item.notes.append("Source sheet row only provided one price; selling price was left blank.")
+
+        items.append(item)
+        index += 2
+
+    return items, issues
+
+
+def extract_tucker_images(path: Path, valid_skus: set[str]) -> str:
+    paragraph_ns = {
+        "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    }
+    relationship_ns = {"pkg": "http://schemas.openxmlformats.org/package/2006/relationships"}
+    name_pattern = re.compile(r"^(?P<name>.+?)\((?P<sku>[^()]+)\)\s*$")
+    image_targets_by_sku: dict[str, str] = {}
+    extracted = 0
+
+    TUCKER_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    for existing_file in TUCKER_IMAGE_DIR.glob("*"):
+        if existing_file.is_file():
+            existing_file.unlink()
+
+    with ZipFile(path) as archive:
+        document_xml = ET.fromstring(archive.read("word/document.xml"))
+        relationships_xml = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+        relationship_map = {
+            rel.attrib.get("Id", ""): rel.attrib.get("Target", "")
+            for rel in relationships_xml.findall("pkg:Relationship", relationship_ns)
+            if rel.attrib.get("Id") and rel.attrib.get("Target")
+        }
+
+        current_image_target = ""
+        body = document_xml.find("w:body", paragraph_ns)
+        for paragraph in body.findall("w:p", paragraph_ns) if body is not None else []:
+            text = clean_text("".join(paragraph.itertext()))
+            image_ids = paragraph.findall(".//a:blip", paragraph_ns)
+            if image_ids and not text:
+                embed_id = clean_text(image_ids[0].attrib.get(f"{{{paragraph_ns['r']}}}embed", ""))
+                current_image_target = clean_text(relationship_map.get(embed_id, ""))
+                continue
+            if not text:
+                continue
+            match = name_pattern.match(text)
+            if not match or not current_image_target:
+                continue
+            sku = clean_code(match.group("sku"))
+            if sku and sku in valid_skus:
+                image_targets_by_sku[sku] = current_image_target
+
+        for sku, target in image_targets_by_sku.items():
+            archive_path = target if target.startswith("word/") else f"word/{target}"
+            if archive_path not in archive.namelist():
+                continue
+            extension = Path(archive_path).suffix.lower() or ".png"
+            safe_sku = re.sub(r'[<>:"/\\|?*]+', "-", sku).strip(" .")
+            destination = TUCKER_IMAGE_DIR / f"{safe_sku}{extension}"
+            destination.write_bytes(archive.read(archive_path))
+            extracted += 1
+
+    return f"Tucker images extracted from {path.name}: {extracted}."
+
+
 def infer_be_category(description: str) -> str:
     text = clean_text(description).upper()
     if text.startswith("HW"):
@@ -884,6 +1085,65 @@ def parse_trident(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
                 )
 
     return items, []
+
+
+def parse_manual_catalog(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
+    items: list[SourceItem] = []
+    issues: list[ReviewIssue] = []
+    if not path.exists():
+        return items, issues
+
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row_number, row in enumerate(reader, start=2):
+            vendor = clean_text(row.get("Vendor") or row.get("Default Vendor Name"))
+            item_name = clean_text(row.get("Item Name"))
+            if not vendor or not item_name:
+                issues.append(
+                    ReviewIssue(
+                        issue_type="manual_catalog_missing_required_field",
+                        vendor=vendor or "ManualCatalog",
+                        source_file=path.name,
+                        item_name=item_name,
+                        sku=clean_code(row.get("SKU", "")),
+                        details=f"Row {row_number} is missing Vendor or Item Name and was skipped.",
+                    )
+                )
+                continue
+
+            category_value = clean_text(row.get("Category") or row.get("Categories"))
+            if category_value and ">" not in category_value:
+                category_value = make_category(vendor, category_value)
+
+            item = SourceItem(
+                vendor=vendor,
+                source_file=path.name,
+                item_name=item_name,
+                sku=clean_code(row.get("SKU", "")),
+                gtin=valid_gtin(row.get("GTIN", "")),
+                description=clean_text(row.get("Description")) or item_name,
+                category=category_value,
+                reporting_category=clean_text(row.get("Reporting Category") or vendor),
+                default_unit_cost=parse_money(row.get("Default Unit Cost", "")),
+                price=parse_money(row.get("Price", "")),
+                vendor_code=clean_text(row.get("Default Vendor Code") or row.get("Vendor Code") or row.get("SKU")),
+                customer_facing_name_override=clean_text(row.get("Customer-facing Name")),
+                permalink_override=clean_text(row.get("Permalink")),
+                seo_title_override=clean_text(row.get("SEO Title")),
+                seo_description_override=clean_text(row.get("SEO Description")),
+                weight_lb_override=parse_money(row.get("Weight (lb)", "")),
+            )
+
+            source_url = clean_text(row.get("Source URL"))
+            if source_url:
+                item.notes.append(f"Manual catalog item sourced from {source_url}.")
+            manual_notes = clean_text(row.get("Notes"))
+            if manual_notes:
+                item.notes.append(manual_notes)
+
+            items.append(item)
+
+    return items, issues
 
 
 def append_eaco_item(
@@ -1154,6 +1414,24 @@ def shopify_weight_lb(grams: object) -> Decimal | None:
     return (value / GRAMS_PER_POUND).quantize(WEIGHT_PRECISION, rounding=ROUND_HALF_UP)
 
 
+def shopify_image_urls(product: dict[str, object]) -> list[str]:
+    urls: list[str] = []
+    images = product.get("images", [])
+    if isinstance(images, list):
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            src = clean_text(image.get("src", ""))
+            if src and src not in urls:
+                urls.append(src)
+    image = product.get("image", {})
+    if isinstance(image, dict):
+        src = clean_text(image.get("src", ""))
+        if src and src not in urls:
+            urls.insert(0, src)
+    return urls
+
+
 def apply_shopify_vendor_enrichments(
     items: list[SourceItem],
 ) -> tuple[list[EnrichmentAuditEntry], Counter[str], Counter[str], list[str]]:
@@ -1221,6 +1499,7 @@ def apply_shopify_vendor_enrichments(
                 product_title
                 and is_descriptive_shopify_title(product_title, item.vendor_code or item.sku)
                 and product_title != product_display_name(item)
+                and not clean_text(item.customer_facing_name_override)
             ):
                 item.customer_facing_name_override = product_title
                 audit_entries.append(
@@ -1291,6 +1570,25 @@ def apply_shopify_vendor_enrichments(
                     )
                 )
                 detail_counts["weights"] += 1
+
+            image_urls = shopify_image_urls(product)
+            if image_urls:
+                item.website_image_url = image_urls[0]
+                item.website_image_urls = image_urls
+                audit_entries.append(
+                    EnrichmentAuditEntry(
+                        enrichment_type=match_type,
+                        vendor=item.vendor,
+                        sku=item.sku,
+                        vendor_code=clean_text(item.vendor_code or item.sku),
+                        item_name=item.item_name,
+                        field="Website Image URL",
+                        value=image_urls[0],
+                        source=product_url,
+                        details="Primary product image from the vendor website feed.",
+                    )
+                )
+                detail_counts["website_images"] += 1
 
             match_counts[vendor] += 1
 
@@ -2416,10 +2714,12 @@ def apply_local_image_matches(
     notes: list[str] = []
 
     jr_files = list(JRACENSTEIN_IMAGE_DIR.glob("*")) if JRACENSTEIN_IMAGE_DIR.exists() else []
+    tucker_files = list(TUCKER_IMAGE_DIR.glob("*")) if TUCKER_IMAGE_DIR.exists() else []
     trident_files = list(TRIDENT_IMAGE_DIR.glob("*")) if TRIDENT_IMAGE_DIR.exists() else []
     manatee_files = list(MANATEE_IMAGE_DIR.glob("*")) if MANATEE_IMAGE_DIR.exists() else []
 
     jr_index = build_unique_path_index(jr_files, lambda path: normalize_sku(path.stem))
+    tucker_index = build_unique_path_index(tucker_files, lambda path: normalize_sku(path.stem))
     trident_index = build_unique_path_index(trident_files, lambda path: local_image_stem_key(path.stem))
     manatee_code_index = build_unique_path_index(manatee_files, lambda path: normalize_sku(path.stem))
     manatee_name_index = build_unique_path_index(manatee_files, lambda path: normalize_name(path.stem))
@@ -2438,6 +2738,16 @@ def apply_local_image_matches(
                     match_type = "jracenstein_image_code"
                     source_folder = "J.racenstein images"
                     detail = f"Matched local image filename on exact JR code token {token}."
+                    break
+
+        elif item.reporting_category == "Tucker":
+            for token in unique_nonempty([item.vendor_code, item.sku]):
+                key = normalize_sku(token)
+                if key in tucker_index:
+                    image_path = tucker_index[key]
+                    match_type = "tucker_exact_code"
+                    source_folder = "Tucker images"
+                    detail = f"Matched local Tucker image filename on exact code token {token}."
                     break
 
         elif item.reporting_category == "Trident":
@@ -2501,11 +2811,49 @@ def apply_local_image_matches(
 
     if jr_files:
         notes.append(f"JR local image matches applied: {match_counts['J.racenstein images']}.")
+    if tucker_files:
+        notes.append(f"Tucker local image matches applied: {match_counts['Tucker images']}.")
     if trident_files:
         notes.append(f"Trident local image matches applied: {match_counts['Trident images/media']}.")
     if manatee_files:
         notes.append(f"Manatee local image matches applied: {match_counts['Manatee images']}.")
     return audit_entries, match_counts, notes
+
+
+def apply_catalog_cleanup_rules(items: list[SourceItem]) -> None:
+    trident_full_kit_rules = {
+        "102389152": (
+            "Hurricane Cat 5 Full Kit",
+            "hurricane-cat-5-full-kit",
+            "Trident dealer sheet notes 24 full kits per pallet.",
+        ),
+        "102833696": (
+            "Hurricane Cat 5 Half Kit",
+            "hurricane-cat-5-half-kit",
+            "Trident dealer sheet notes 36 half kits per pallet.",
+        ),
+        "102770104": (
+            "Hurricane Cat 4 Full Kit",
+            "hurricane-cat-4-full-kit",
+            "Trident dealer sheet notes 36 full kits per pallet.",
+        ),
+    }
+
+    for item in items:
+        if item.vendor != "Trident":
+            continue
+        rule = trident_full_kit_rules.get(clean_text(item.vendor_code))
+        if not rule:
+            continue
+
+        display_name, permalink, pallet_note = rule
+        item.item_name = display_name
+        item.customer_facing_name_override = display_name
+        item.category = make_category("Trident", "2 Part Sealers")
+        item.description_override = build_description(display_name, pallet_note)
+        item.permalink_override = permalink
+        if pallet_note not in item.notes:
+            item.notes.append(pallet_note)
 
 
 def item_lookup_tokens(item: SourceItem) -> set[str]:
@@ -3140,6 +3488,10 @@ def build_image_database_rows(
         "Local Image Match Type",
         "Local Image Source Folder",
         "Has Local Image",
+        "Website Image URL",
+        "Website Image URLs",
+        "Has Website Image",
+        "Has Any Image",
     ]
     fieldnames = list(master_rows[0].keys()) + image_columns if master_rows else image_columns
     rows: list[dict[str, str]] = []
@@ -3150,6 +3502,10 @@ def build_image_database_rows(
         row["Local Image Match Type"] = clean_text(item.image_match_type)
         row["Local Image Source Folder"] = clean_text(item.image_source_folder)
         row["Has Local Image"] = "Y" if clean_text(item.image_relative_path) else "N"
+        row["Website Image URL"] = clean_text(item.website_image_url)
+        row["Website Image URLs"] = " | ".join(clean_text(url) for url in item.website_image_urls if clean_text(url))
+        row["Has Website Image"] = "Y" if clean_text(item.website_image_url) else "N"
+        row["Has Any Image"] = "Y" if clean_text(item.image_relative_path) or clean_text(item.website_image_url) else "N"
         rows.append(row)
     return fieldnames, rows
 
@@ -3232,6 +3588,7 @@ SOURCE_DEFINITIONS = [
     (["*MPWSR*Price List*.csv"], parse_mpwsr),
     (["*Dealer Pricing*.xlsx"], parse_inseco),
     (["*Price List - Distributors*.xlsx"], parse_jracenstein),
+    (["*Tucker*price*list*.docx", "*tucker*list*.docx"], parse_tucker_docx),
     (["*BE*PriceList*.pdf"], parse_be),
     (["*Trident*Dealer Price Sheet*.pdf"], parse_trident),
     (["*Distributor New Construction*Pricing.pdf"], parse_eaco_new_construction),
@@ -3284,6 +3641,7 @@ def summarize(
         f"Vendor website GTINs applied: {website_detail_counts['gtins']}",
         f"Vendor website descriptions applied: {website_detail_counts['descriptions']}",
         f"Vendor website weights applied: {website_detail_counts['weights']}",
+        f"Vendor website images applied: {website_detail_counts['website_images']}",
         f"Rows with local product images matched: {image_rows_matched}",
         "Counts by vendor:",
     ]
@@ -3299,8 +3657,8 @@ def summarize(
     lines.append("  - Items without a selling price were imported as Stockable=Y and Sellable=N.")
     lines.append("  - GTIN values only populate when they pass a checksum check or come from a verified manual override.")
     lines.append("  - SEO fields and permalinks are generated automatically from the cleaned catalog data.")
-    lines.append("  - Local product images are tracked in the internal image database export, not the Square import file.")
-    lines.append("  - MPWSR and Barens website enrichments only apply on exact SKU matches or unique exact-title matches.")
+    lines.append("  - Product images are tracked in the internal image database export, not the Square import file.")
+    lines.append("  - MPWSR, Barens, and Tucker website enrichments only apply on exact SKU matches or unique exact-title matches.")
     lines.append("  - JRacenstein matches use exact live product or variant code matches from the Storefront catalog, with size/name checks only to break ties. Trident and EacoChem matches use exact base product names plus the existing pack suffix.")
     for note in website_notes:
         lines.append(f"  - {note}")
@@ -3320,11 +3678,22 @@ def main() -> None:
     source_items: list[SourceItem] = []
     parser_issues: list[ReviewIssue] = []
 
+    manual_items, manual_issues = parse_manual_catalog(MANUAL_CATALOG_ITEMS_PATH)
+    source_items.extend(manual_items)
+    parser_issues.extend(manual_issues)
+
     for patterns, parser in SOURCE_DEFINITIONS:
         path = resolve_latest_source(patterns)
         items, issues = parser(path)
         source_items.extend(items)
         parser_issues.extend(issues)
+    tucker_source_path = resolve_latest_source(["*Tucker*price*list*.docx", "*tucker*list*.docx"])
+    tucker_valid_skus = {
+        clean_code(item.vendor_code or item.sku)
+        for item in source_items
+        if item.vendor == "Tucker" and clean_code(item.vendor_code or item.sku)
+    }
+    tucker_image_note = extract_tucker_images(tucker_source_path, tucker_valid_skus)
 
     source_items, skipped_duplicates = dedupe_same_source(source_items)
     source_items, merge_issues, merged_groups = merge_duplicate_items(source_items)
@@ -3339,7 +3708,9 @@ def main() -> None:
     website_match_counts.update(direct_match_counts)
     website_detail_counts.update(direct_detail_counts)
     website_notes.extend(direct_notes)
+    apply_catalog_cleanup_rules(source_items)
     image_audit_entries, image_match_counts, image_notes = apply_local_image_matches(source_items)
+    image_notes.insert(0, tucker_image_note)
     customer_name_issues, clarified_customer_names = resolve_customer_facing_name_collisions(source_items)
 
     master_rows = [build_square_row(item, square_headers) for item in source_items]

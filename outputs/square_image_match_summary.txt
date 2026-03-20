@@ -1,0 +1,19 @@
+Square export used: C:\Codex\AZCS Inventory\inputs\square_exports\MLT3E97CHP443_catalog-2026-03-18-2021.xlsx
+Catalog image source: C:\Codex\AZCS Inventory\outputs\inventory_database_with_images.csv
+Batch size: 250
+Rows ready for image matching: 170
+Batch folders created: 1
+Master queue CSV: C:\Codex\AZCS Inventory\outputs\square_image_match_queue.csv
+Master queue workbook: C:\Codex\AZCS Inventory\outputs\square_image_match_queue.xlsx
+Batch folder root: C:\Codex\AZCS Inventory\outputs\square_image_match_batches
+
+Recommended use:
+1. Open one batch CSV and work that batch only.
+2. In Square, select or search the 250 items from that batch by SKU.
+3. Bulk-assign the matching images from the Square image library or use the copied batch image folder if needed.
+4. Move to the next batch folder after that group is complete.
+
+Notes:
+- Square export had 14 duplicate SKU keys; first row was kept for batching.
+- Catalog rows skipped because they did not have a local image: 8086.
+- Catalog rows with local images skipped because no Square SKU match was found: 2150.

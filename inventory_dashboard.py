@@ -22,6 +22,7 @@ from dashboard_support import (
     WORKFLOWS,
     copy_files_to_input,
     ensure_runtime_dirs,
+    get_recommended_upload_files,
     list_input_files,
     list_latest_outputs,
     list_recent_runs,
@@ -761,7 +762,11 @@ class InventoryDashboard(tk.Tk):
         latest_files = list_latest_outputs(workflow_key)
         self.outputs_summary_var.set(f"{workflow.name} | {len(latest_files)} latest file{'s' if len(latest_files) != 1 else ''} ready")
         outputs_text = ", ".join(playbook["outputs"]) if playbook["outputs"] else "Open the latest folder to review the files."
-        self.outputs_subtitle_var.set(f"{playbook['best_for']} Main outputs: {outputs_text}.")
+        recommended = get_recommended_upload_files(workflow_key)
+        recommendation_text = ""
+        if recommended:
+            recommendation_text = " Recommended Square upload: " + ", ".join(path.name for path in recommended) + " in to_import."
+        self.outputs_subtitle_var.set(f"{playbook['best_for']} Main outputs: {outputs_text}.{recommendation_text}")
 
     def _on_latest_workflow_change(self, index: int) -> None:
         workflow_key = self.workflow_order[index]

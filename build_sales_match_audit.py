@@ -69,10 +69,10 @@ STOPWORDS = {
 }
 
 CATEGORY_VENDOR_MAP = {
-    "CHEMICALS": {"EACOCHEM", "TRIDENT"},
+    "CHEMICALS": {"EACOCHEM", "TRIDENT", "FRONT9", "ENVIROBIOCLEANER", "MPWSR"},
     "EACO CHEM": {"EACOCHEM"},
-    "EBC": {"TRIDENT"},
-    "F9": {"EACOCHEM", "TRIDENT"},
+    "EBC": {"ENVIROBIOCLEANER"},
+    "F9": {"FRONT9"},
     "MANATEE": {"MPWSR"},
     "PARTS": {"MPWSR", "BARRENS", "BE"},
     "SAND": {"TRIDENT"},
@@ -82,8 +82,14 @@ CATEGORY_VENDOR_MAP = {
     "TAGINATOR": {"JRACENSTEIN"},
     "TOOLS": {"MPWSR", "BARRENS", "JRACENSTEIN", "BE"},
     "TRIDENT": {"TRIDENT"},
-    "TUCKER": {"JRACENSTEIN"},
+    "TUCKER": {"JRACENSTEIN", "TUCKER"},
     "WINDOW CLEANING": {"JRACENSTEIN"},
+}
+
+NON_INVENTORY_CATEGORIES = {"SERVICE"}
+NON_INVENTORY_ITEMS = {
+    "REPAIR SERVICE LABOR",
+    "SHIPPING AND DELIVERY",
 }
 
 
@@ -187,6 +193,7 @@ def normalize_text(value: str) -> str:
         "POUNDS": " LB ",
         "POUND": " LB ",
         "LBS": " LB ",
+        "GROUNDS KEEPER": " GROUNDSKEEPER ",
         "TRIGGER SPRAY": " ",
         "READY TO USE": " RTU ",
     }
@@ -199,6 +206,14 @@ def normalize_text(value: str) -> str:
 
 def canonical_code(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+
+
+def is_non_inventory_sales_item(category: str, item: str) -> bool:
+    category_key = normalize_text(category)
+    item_key = normalize_text(item)
+    if category_key in NON_INVENTORY_CATEGORIES:
+        return True
+    return item_key in NON_INVENTORY_ITEMS
 
 
 def significant_tokens(normalized_text: str) -> set[str]:
@@ -627,14 +642,17 @@ def main() -> None:
         second_score = Decimal("0")
         candidate_details: list[tuple[Decimal, MasterRecord, str]] = []
 
-        if override:
+        if is_non_inventory_sales_item(aggregate.category, aggregate.item):
+            match_type = "non_inventory"
+            match_reason = "Service or shipping row excluded from inventory matching."
+        elif override:
             matched_record = next((record for record in records if record.row.get("SKU", "").strip() == override.master_sku), None)
             if matched_record is not None:
                 match_type = "manual_override"
                 match_score = Decimal("1")
                 match_reason = f"Manual override. {override.notes}".strip()
 
-        if matched_record is None and aggregate.sku:
+        if match_type != "non_inventory" and matched_record is None and aggregate.sku:
             exact_sku_candidates = sorted(set(sku_index.get(canonical_code(aggregate.sku), [])))
             if len(exact_sku_candidates) == 1:
                 matched_record = records[exact_sku_candidates[0]]
@@ -642,7 +660,7 @@ def main() -> None:
                 match_score = Decimal("1")
                 match_reason = "Sales SKU exactly matches catalog SKU or vendor code."
 
-        if matched_record is None and sales_gtin:
+        if match_type != "non_inventory" and matched_record is None and sales_gtin:
             exact_gtin_candidates = sorted(set(gtin_index.get(sales_gtin, [])))
             if len(exact_gtin_candidates) == 1:
                 matched_record = records[exact_gtin_candidates[0]]
@@ -650,7 +668,7 @@ def main() -> None:
                 match_score = Decimal("1")
                 match_reason = "Sales GTIN exactly matches catalog GTIN."
 
-        if matched_record is None:
+        if match_type != "non_inventory" and matched_record is None:
             exact_name_candidates = sorted(
                 set(index for index in name_index.get(sales_name, []) if index in sales_category_candidates(aggregate.category, records))
             )
@@ -660,7 +678,7 @@ def main() -> None:
                 match_score = Decimal("1")
                 match_reason = "Normalized sales item name exactly matches the catalog name."
 
-        if matched_record is None and sales_base_name:
+        if match_type != "non_inventory" and matched_record is None and sales_base_name:
             category_indexes = sales_category_candidates(aggregate.category, records)
             base_name_candidates = sorted(set(index for index in base_name_index.get(sales_base_name, []) if index in category_indexes))
             if len(base_name_candidates) == 1:
@@ -678,7 +696,7 @@ def main() -> None:
                     match_score = Decimal("1")
                     match_reason = "Base product name matched and pack size isolated a single catalog item."
 
-        if matched_record is None and sales_base_name_code:
+        if match_type != "non_inventory" and matched_record is None and sales_base_name_code:
             category_indexes = sales_category_candidates(aggregate.category, records)
             base_name_code_candidates = sorted(
                 set(index for index in base_name_code_index.get(sales_base_name_code, []) if index in category_indexes)
@@ -698,7 +716,7 @@ def main() -> None:
                     match_score = Decimal("1")
                     match_reason = "Compact base product code matched and pack size isolated a single catalog item."
 
-        if matched_record is None and sales_codes:
+        if match_type != "non_inventory" and matched_record is None and sales_codes:
             category_indexes = sales_category_candidates(aggregate.category, records)
             exact_code_candidates = sorted(
                 {
@@ -714,7 +732,7 @@ def main() -> None:
                 match_score = Decimal("1")
                 match_reason = "Sales item exposes a unique catalog code or model number."
 
-        if matched_record is None:
+        if match_type != "non_inventory" and matched_record is None:
             category_indexes = sales_category_candidates(aggregate.category, records)
             candidate_indexes = candidate_indexes_for_sales_item(sales_tokens, sales_codes, category_indexes, sku_index, token_index)
             for candidate_index in candidate_indexes:
@@ -842,7 +860,7 @@ def main() -> None:
         }
         audit_rows.append(audit_row)
 
-        if not accepted:
+        if not accepted and match_type != "non_inventory":
             review_rows.append(audit_row)
 
     signal_rows: list[dict[str, str]] = []

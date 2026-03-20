@@ -64,6 +64,12 @@ INPUT_FOLDERS: dict[str, InputFolder] = {
         path=INPUT_DIR / "price_lists",
         description="Vendor price lists used to rebuild the master catalog.",
     ),
+    "manual_catalog": InputFolder(
+        key="manual_catalog",
+        label="Manual Catalog",
+        path=INPUT_DIR,
+        description="Supplemental catalog rows kept in inputs/manual_catalog_items.csv for items confirmed from sales or vendor websites.",
+    ),
     "square_exports": InputFolder(
         key="square_exports",
         label="Square Exports",
@@ -115,7 +121,7 @@ WORKFLOWS: dict[str, Workflow] = {
         name="Build Master Inventory",
         script_name="build_master_inventory.py",
         description="Rebuild the Square catalog from vendor price lists and website/image enrichment.",
-        input_keys=("price_lists",),
+        input_keys=("price_lists", "manual_catalog"),
         output_files=(
             "square_master_inventory.csv",
             "square_master_inventory_overlap_review.csv",
@@ -252,6 +258,26 @@ PUBLISHED_OUTPUTS: dict[str, tuple[tuple[str, Path, str], ...]] = {
     ),
 }
 
+DATED_IMPORT_ALIASES: dict[str, str] = {
+    "catalog_import_current.csv": "inventory",
+    "catalog_master_baseline.csv": "inventory-baseline",
+    "catalog_price_update.csv": "price-update",
+    "receiving_import.csv": "receiving-import",
+    "catalog_import_current_with_stock.csv": "inventory-with-stock",
+    "catalog_import_current_with_stock.xlsx": "inventory-with-stock",
+    "receiving_import.xlsx": "receiving-import",
+    "quantity_update_from_transactions.csv": "quantity-update",
+    "catalog_price_update_from_transactions.csv": "price-update-from-transactions",
+}
+
+WORKFLOW_RECOMMENDED_UPLOAD_ALIASES: dict[str, tuple[str, ...]] = {
+    "master_inventory": ("inventory-baseline",),
+    "pricing": ("inventory", "price-update"),
+    "receiving": ("receiving-import",),
+    "seed_stock": ("inventory-with-stock",),
+    "stock_snapshot": ("quantity-update", "price-update-from-transactions"),
+}
+
 
 def ensure_runtime_dirs() -> None:
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -291,6 +317,17 @@ def open_path(path: Path) -> None:
     os.startfile(str(path))  # type: ignore[attr-defined]
 
 
+def get_recommended_upload_files(workflow_key: str) -> list[Path]:
+    ensure_runtime_dirs()
+    aliases = WORKFLOW_RECOMMENDED_UPLOAD_ALIASES.get(workflow_key, ())
+    recommended: list[Path] = []
+    for alias in aliases:
+        matches = sorted(TO_IMPORT_DIR.glob(f"{alias}_*"), key=lambda path: path.stat().st_mtime, reverse=True)
+        if matches:
+            recommended.append(matches[0])
+    return recommended
+
+
 def _clear_directory_contents(path: Path) -> None:
     if not path.exists():
         return
@@ -311,6 +348,7 @@ def _write_workspace_guides() -> None:
         "catalog_import_current_with_stock.csv = full current import with AZCS stock seeded from the latest live Square export.",
         "quantity_update_from_transactions.csv = quantity update file from the stock snapshot workflow.",
         "catalog_price_update_from_transactions.csv = price update file from the stock snapshot workflow.",
+        "Dated copies are also written here with names like inventory_2026-03-20_134500.csv so the newest Square upload file is easier to spot.",
     ]
     review_lines = [
         "Use this folder for the simple, current review and workbook files.",
@@ -326,12 +364,18 @@ def _write_workspace_guides() -> None:
 
 
 def _publish_friendly_outputs(workflow_key: str, run_dir: Path) -> None:
+    timestamp = run_dir.parent.name
     for source_name, destination_dir, published_name in PUBLISHED_OUTPUTS.get(workflow_key, ()):
         source = run_dir / source_name
         if not source.exists():
             continue
         destination_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination_dir / published_name)
+        target = destination_dir / published_name
+        shutil.copy2(source, target)
+        alias_stem = DATED_IMPORT_ALIASES.get(published_name)
+        if destination_dir == TO_IMPORT_DIR and alias_stem:
+            dated_name = f"{alias_stem}_{timestamp}{target.suffix.lower()}"
+            shutil.copy2(source, destination_dir / dated_name)
 
 
 def _write_run_log(run_dir: Path, result: RunResult) -> None:
@@ -421,6 +465,7 @@ def list_recent_runs(limit: int = 10) -> list[Path]:
 def publish_existing_outputs() -> list[Path]:
     ensure_runtime_dirs()
     published: list[Path] = []
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     for workflow_key, mappings in PUBLISHED_OUTPUTS.items():
         for source_name, destination_dir, published_name in mappings:
             source = OUTPUT_DIR / source_name
@@ -430,4 +475,9 @@ def publish_existing_outputs() -> list[Path]:
             target = destination_dir / published_name
             shutil.copy2(source, target)
             published.append(target)
+            alias_stem = DATED_IMPORT_ALIASES.get(published_name)
+            if destination_dir == TO_IMPORT_DIR and alias_stem:
+                dated_target = destination_dir / f"{alias_stem}_{timestamp}{target.suffix.lower()}"
+                shutil.copy2(source, dated_target)
+                published.append(dated_target)
     return published

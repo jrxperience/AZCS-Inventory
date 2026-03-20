@@ -1,0 +1,18 @@
+Sales Category,Sales Item,Sales SKU,Master SKU,Notes
+Equipment,W3524HA12V,505599Y,HW3524HA12V,Sales item exactly matches the existing BE hot-water skid model with the sales alias missing the leading H.
+None,RCCT- 7710TU-7,177942N,RCCT-7710TU-7,Added supplemental catalog row from repeated Square sales notes and stable realized selling price.
+Tucker,Tucker H2Pro,838290Z,h2proWP,Sales alias mapped to the internal Tucker H2Pro WP catalog row using your current AZCS SKU and the live Tucker water-powered H2Pro product details.
+Tucker,Tucker Rival,X138060,T-CART-RIVAL,Sales alias mapped to the internal Tucker Rival RO/DI cart SKU.
+Tucker,RIVAL RO/DI Cart,T-Cart-RIVAL,T-CART-RIVAL,Sales item and SKU both point to the internal Tucker Rival RO/DI cart SKU.
+Equipment,Truck Mount Skid CRX680,9712612,9712612,Added supplemental catalog row from stable realized sales using the same internal SKU.
+Chemicals,Sodium Hydroxide 50 lbs.,L498970,L498970,Added supplemental catalog row from repeated realized sales using the same internal SKU.
+Chemicals,Gold Assassin - Kit,889071S,GA-55K,Sales note explicitly says Gold Assassin 55 Gallon Mix Kit.
+Chemicals,Gold Assassin 5 gal.,146543X,GA-5G,Sales note explicitly says Gold Assassin Degreaser and matches the 5 gallon RTU item.
+EBC,EBC Multipurpose 55 Gal Kit,S305590,1007-24624,Added manual catalog row using Enviro Bio Cleaner manufacturer product code.
+EBC,EBC Multipurpose 5 Gallon,9609678,1007-24632,Added manual catalog row using Enviro Bio Cleaner manufacturer product code.
+F9,F9 Grounds Keeper - 5,f92101B,F9GK-P-5,Added manual catalog row from Front 9 Restoration official 5 gallon product feed.
+F9,F9 Efflo - 5,f977463,F9EF-P-5,Added manual catalog row from Front 9 Restoration official 5 gallon product feed.
+F9,F9 Double Eagle - 5,f954013,F9DE-P-5,Added manual catalog row from Front 9 Restoration official 5 gallon product feed.
+F9,F9 Barc - 1,113313764306,F9BC-G,Added manual catalog row from Front 9 Restoration official 1 gallon product feed.
+F9,F9 Barc - 5,f94014V,F9BC-P-5,Added manual catalog row from Front 9 Restoration official 5 gallon product feed.
+Sand,Joint Sand PLATINUM,G539799,TDJ-JOINTINGPLA,Approved because the sales item exactly matches the existing platinum sand variant.

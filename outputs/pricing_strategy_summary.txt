@@ -6,16 +6,16 @@ Square strategic price update file: C:\Codex\AZCS Inventory\outputs\square_catal
 Issues file: C:\Codex\AZCS Inventory\outputs\pricing_strategy_issues.csv
 Price update files processed: 0
 Pricing override files processed: 0
-Sales signal rows loaded: 169
+Sales signal rows loaded: 181
 Rows with usable cost: 9974
 Rows with current selling price: 2867
-Rows with sales history: 169
-Rows with trusted sales signals: 149
-Rows raised by realized sales anchor: 50
+Rows with sales history: 174
+Rows with trusted sales signals: 154
+Rows raised by realized sales anchor: 54
 Rows with missing price filled: 7107
 Rows raised from low margin: 374
-Rows raised from trusted sales history: 23
-Rows kept at current price: 2470
+Rows raised from trusted sales history: 24
+Rows kept at current price: 2469
 Rows using manual overrides: 0
 Rows preserved above target band: 275
 Average current gross margin on already-priced rows: 28.0%
