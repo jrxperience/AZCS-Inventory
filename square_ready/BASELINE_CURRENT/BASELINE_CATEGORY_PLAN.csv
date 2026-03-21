@@ -1,5 +1,4 @@
 Vendor,Base Category,Assigned Category,Items,First Item,Last Item
-AZ Cleaning Supplies,AZ Cleaning Supplies > Service,AZ Cleaning Supplies > Service,1,Repair / Service Labor,Repair / Service Labor
 AZCS,AZCS > Chemicals,AZCS > Chemicals,1,Sodium Hydroxide - 50 lb Bag,Sodium Hydroxide - 50 lb Bag
 BE,BE > Cold Water Equipment,BE > Cold Water Equipment,14,"CW, 2-STEP, ELEC, 4GPM, 2000PSI, 5HP, 3PH 208VAC@17A/230VAC@16A","CW; 2-STEP, ELECTRIC, 5GPM@2000PSI, 7.5HP, 1PH 230VAC@36A"
 BE,BE > Equipment,BE > Equipment > 001-200,200,"""T"" TYPE SCREW FOR 3"" TP KIT OF 6","BLADE ASSY, 30"" FOR JINLING FP30. NLA"
@@ -46,18 +45,11 @@ Barrens,Barrens > Soft Wash & Foam,Barrens > Soft Wash & Foam,22,(10)FOAM LANCE 
 Barrens,Barrens > Surface Cleaners & Parts,Barrens > Surface Cleaners & Parts,123,"(12)GP 20"" FLAT SURFACE CLEANER 8GPM 4000PSI","WW3128-4 (26.75"") SPRAY BAR 4 TIP BIG GUY 28"""
 Barrens,Barrens > Tanks & Chemical Delivery,Barrens > Tanks & Chemical Delivery,83,"(10)FLOAT TANK WITH LID, PLASTIC, 1 GAL.",TT9111 3GPM 1500PSI 24MM SOLID SHAFT
 Barrens,Barrens > Unloaders & Flow Control,Barrens > Unloaders & Flow Control,140,"(100)EZ-GRIP FGH x 1/2"" MPT W/BYPASS FITTING",YKITU5221 KIT REPAIR YU5221 UNLOADER
-Chemicals,Chemicals,Chemicals,32,Bullseye,White Vinegar
-Chemicals > EaCo Chem,Chemicals > EaCo Chem,Chemicals > EaCo Chem,1,Showboat,Showboat
-Chemicals > Sweep Away,Chemicals > Sweep Away,Chemicals > Sweep Away,9,Sweep Away Degreaser 12 Pack,Sweep Away Spray Oil Stain Degreaser
-Chemicals > Tagaway/Taginator,Chemicals > Tagaway/Taginator,Chemicals > Tagaway/Taginator,6,Tagaway 1 gal.,Taginator 5 Gal.
-Chemicals > Trident,Chemicals > Trident,Chemicals > Trident,2,Sea Wall 5 gal.,Trident Roller Solvent
 EacoChem,EacoChem > Fleet Wash Products,EacoChem > Fleet Wash Products,30,AP Plus BC (Purple Plus) - 1 Gallon,Truck Wash Supreme SC - 55 Gallon Drum
 EacoChem,EacoChem > New Construction & Restoration,EacoChem > New Construction & Restoration,66,ABF Restoration - 1 Gallon,White Scum Presoak - 55 Gallon Drum
 EacoChem,EacoChem > Sealers,EacoChem > Sealers,6,EC 101 WB - 1 Gallon,EC 102 SOL - 55 Gallon Drum
 EnviroBioCleaner,EnviroBioCleaner > Multipurpose Cleaner and Degreaser,EnviroBioCleaner > Multipurpose Cleaner and Degreaser,2,EBC Multipurpose Cleaner and Degreaser - 5 Gallon Pail,EBC Multipurpose Cleaner and Degreaser - 55 Gallon Kit
-Equipment,Equipment,Equipment,9,8012PRO-35HG,"Whisper Wash Mini Mondo 31"""
 Front9,Front9 > Concrete Cleaners,Front9 > Concrete Cleaners,5,F9 BARC Rust and Oxidation Remover - 1 Gallon,F9 Groundskeeper - 5 Gallon Pail
-H & G,H & G > Chemicals > Sweep Away,H & G > Chemicals > Sweep Away,1,Sweep Away Combo,Sweep Away Combo
 INSECO,INSECO > CONCRETE/STONE/PAVER SEALERS,INSECO > CONCRETE/STONE/PAVER SEALERS,16,1 K URETHANE Five,SEALTHANE Natural Matte 2 Part Urethane Full Kit
 INSECO,INSECO > JOINT SAND,INSECO > JOINT SAND,4,ASH 50# BAG,RIVER ROCK 50# BAG
 INSECO,INSECO > SEALTHANE Color Packs,INSECO > SEALTHANE Color Packs,32,Black 128 Ounce,Yellow Oxide 4 Ounce
@@ -113,15 +105,7 @@ MPWSR,MPWSR > Surface Cleaners & Parts,MPWSR > Surface Cleaners & Parts > 001-20
 MPWSR,MPWSR > Surface Cleaners & Parts,MPWSR > Surface Cleaners & Parts > 201-251,51,Solid handle for surface cleaners,Xforce Stainless Steel Performance 4 tip bar Ultra Clean 19 Classic 19
 MPWSR,MPWSR > Tanks & Chemical Delivery,MPWSR > Tanks & Chemical Delivery,87,"1 1/2"" Bulkhead",ZWD 5030 direct drive bare pump 6305.2400.00
 MPWSR,MPWSR > Unloaders & Flow Control,MPWSR > Unloaders & Flow Control,42,**SPECIAL FOR PSI ONLY** PMR RW 5535S-VRT3-310EZ W/BYPASS & THERM RELIEF,VRT-3 Repair Kit
-Manatee,Manatee,Manatee,4,1/2 hose x 1/2 M Pipe Swivel Crimp,Xforce SS 4 tip bar Ground Force Spray Bar
-Maxim Mart,Maxim Mart > Window Cleaning,Maxim Mart > Window Cleaning,2,Blue Microfiber Glass Cloth / Towel,Microfiber Waffle Weave Towel
-Parts,Parts,Parts,54,"1/4"" MPT Nozzle 25 Degree 60 gpm",VAM03
 RCCT,RCCT > Trailers,RCCT > Trailers,1,77 x 10 Tandem Axle Utility Trailer - No Ramp,77 x 10 Tandem Axle Utility Trailer - No Ramp
-Sand,Sand > Chemicals > Trident,Sand > Chemicals > Trident,12,Joint Sand BLACK,PolySweep TAN
-Sealer,Sealer,Sealer,3,EC 101 WB 1 Gal.,Micro-Seal - 5
-Service,Service,Service,1,Pressure Washing Equipment Maintenance / PM,Pressure Washing Equipment Maintenance / PM
-Tools,Tools,Tools,131,"14"" Unger Microfiber Window Combi",Yellow Microfiber Towel
-Tools,Tools > Chemicals > Tagaway/Taginator,Tools > Chemicals > Tagaway/Taginator,1,Tagsprayer,Tagsprayer
 Trident,Trident > 2 Part Sealers,Trident > 2 Part Sealers,3,Hurricane Cat 4 Full Kit,Hurricane Cat 5 Half Kit
 Trident,Trident > Cleaners,Trident > Cleaners,11,Point Break - 4 Gallon Case (per gallon),Wipe Out - 5 Gallon Pail
 Trident,Trident > Sand,Trident > Sand,12,Joint Sand - Black - 50 lb bag,Polysweep - Tan - 50 lb bag
@@ -130,6 +114,3 @@ Tucker,Tucker > Accessories,Tucker > Accessories,73,0-160 psi Pressure Gauge Liq
 Tucker,Tucker > Catalog,Tucker > Catalog,195,1/2 Black Tubing (per 10 foot length),Wood Cone Tip for Acme Tips
 Tucker,Tucker > Pure Water Systems,Tucker > Pure Water Systems,47,1 cubic foot of Tucker DI resin in Bucket,Water-Fed Delivery Pump
 Tucker,Tucker > Water Fed Pole Parts,Tucker > Water Fed Pole Parts,102,#1 Section for 50HMw/ clamp,V2 Lever Complete for CF Pole Clamp
-Uncategorized,Uncategorized,Uncategorized,55,1/2 10 pack o ring,Wooster R054 2 -4 Extension Pole
-Window Cleaning,Window Cleaning,Window Cleaning,15,"3M 08003 Pad,White,10""L",Unger Ninja Scraper 6 Inch
-Window Cleaning > Sorbo,Window Cleaning > Sorbo,Window Cleaning > Sorbo,16,"Sorbo 14"" Fixed T-Bar",Sorbo Yellow Jacket Sleeve with Brass Snaps 18in

@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import re
 
+from openpyxl import Workbook, load_workbook
+
 
 BASE_DIR = Path(__file__).resolve().parent
 MASTER_PATH = BASE_DIR / "outputs" / "square_master_inventory.csv"
@@ -27,7 +29,7 @@ EXPORT_SEARCH_DIRS = (
     Path.home() / "Downloads",
     BASE_DIR / "inputs" / "square_exports",
 )
-EXPORT_GLOB = "*catalog-*.csv"
+EXPORT_GLOBS = ("*catalog-*.csv", "*catalog-*.xlsx")
 MIN_REAL_EXPORT_ROWS = 100
 
 LOCATION_PREFIXES = (
@@ -64,6 +66,24 @@ def read_csv_rows(path: Path) -> list[list[str]]:
         return [list(row) for row in csv.reader(handle)]
 
 
+def read_xlsx_rows(path: Path) -> list[list[str]]:
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheet = workbook.active
+        return [[clean_text(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
+    finally:
+        workbook.close()
+
+
+def read_table_rows(path: Path) -> list[list[str]]:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return read_csv_rows(path)
+    if suffix == ".xlsx":
+        return read_xlsx_rows(path)
+    raise ValueError(f"Unsupported tabular file type: {path}")
+
+
 def find_header_index(rows: list[list[str]], required: str) -> int:
     for index, row in enumerate(rows):
         if required in row:
@@ -86,7 +106,7 @@ def rows_to_dicts(headers: list[str], rows: list[list[str]]) -> list[dict[str, s
 
 
 def read_records(path: Path) -> tuple[list[list[str]], int, list[str], list[dict[str, str]]]:
-    rows = read_csv_rows(path)
+    rows = read_table_rows(path)
     header_index = find_header_index(rows, "SKU")
     headers = [clean_text(cell) for cell in rows[header_index]]
     records = rows_to_dicts(headers, rows[header_index + 1 :])
@@ -109,18 +129,19 @@ def find_latest_real_export() -> Path:
     for folder in EXPORT_SEARCH_DIRS:
         if not folder.exists():
             continue
-        for path in folder.glob(EXPORT_GLOB):
-            resolved = path.resolve()
-            if resolved in seen or not path.is_file():
-                continue
-            seen.add(resolved)
-            row_count = count_real_export_rows(path)
-            if row_count < MIN_REAL_EXPORT_ROWS:
-                continue
-            candidates.append((path.stat().st_mtime, row_count, path))
+        for pattern in EXPORT_GLOBS:
+            for path in folder.glob(pattern):
+                resolved = path.resolve()
+                if resolved in seen or not path.is_file():
+                    continue
+                seen.add(resolved)
+                row_count = count_real_export_rows(path)
+                if row_count < MIN_REAL_EXPORT_ROWS:
+                    continue
+                candidates.append((path.stat().st_mtime, row_count, path))
     if not candidates:
         search_locations = ", ".join(str(path) for path in EXPORT_SEARCH_DIRS)
-        raise FileNotFoundError(f"Could not find a real Square export CSV in: {search_locations}")
+        raise FileNotFoundError(f"Could not find a real Square export CSV/XLSX in: {search_locations}")
     return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
@@ -132,6 +153,10 @@ def derive_run_tag(export_path: Path) -> str:
 
 
 def clear_directory(path: Path) -> None:
+    resolved = path.resolve()
+    allowed_root = SQUARE_READY_DIR.resolve()
+    if resolved == allowed_root or allowed_root not in resolved.parents:
+        raise ValueError(f"Refusing to clear unexpected directory: {path}")
     if not path.exists():
         return
     for child in path.iterdir():
@@ -793,6 +818,19 @@ def write_csv(path: Path, headers: list[str], records: list[dict[str, str]], tem
             writer.writerow([clean_text(record.get(header, "")) for header in headers])
 
 
+def write_xlsx(path: Path, headers: list[str], records: list[dict[str, str]], template_prefix_rows: list[list[str]] | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Import"
+    for row in template_prefix_rows or []:
+        sheet.append(list(row))
+    sheet.append(list(headers))
+    for record in records:
+        sheet.append([clean_text(record.get(header, "")) for header in headers])
+    workbook.save(path)
+
+
 def build_archive_row(record: dict[str, str], template_headers: list[str]) -> dict[str, str]:
     archive_row = clone_to_template(record, template_headers)
     archive_row["Reference Handle"] = ""
@@ -803,7 +841,7 @@ def build_archive_row(record: dict[str, str], template_headers: list[str]) -> di
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the baseline Square inventory import package.")
-    parser.add_argument("--export", dest="export_path", help="Optional path to the current Square export CSV.")
+    parser.add_argument("--export", dest="export_path", help="Optional path to the current Square export CSV or XLSX.")
     parser.add_argument("--template", dest="template_path", help="Optional path to the Square import template CSV.")
     parser.add_argument("--run-tag", dest="run_tag", help="Optional tag for the dated backup file.")
     return parser.parse_args()
@@ -929,15 +967,33 @@ def main() -> None:
     write_csv(primary_upload_path, template_headers, full_import_rows, template_prefix_rows)
     write_csv(backup_import_path, template_headers, full_import_rows, template_prefix_rows)
     write_csv(current_backup_path, template_headers, full_import_rows, template_prefix_rows)
+    write_xlsx(package_import_path.with_suffix(".xlsx"), template_headers, full_import_rows, template_prefix_rows)
+    write_xlsx(primary_upload_path.with_suffix(".xlsx"), template_headers, full_import_rows, template_prefix_rows)
     write_csv(
         archive_path,
         template_headers,
         archive_rows,
         template_prefix_rows,
     )
+    write_xlsx(
+        archive_path.with_suffix(".xlsx"),
+        template_headers,
+        archive_rows,
+        template_prefix_rows,
+    )
     write_csv(category_plan_path, list(category_plan_rows[0].keys()) if category_plan_rows else [], category_plan_rows)
+    write_xlsx(
+        category_plan_path.with_suffix(".xlsx"),
+        list(category_plan_rows[0].keys()) if category_plan_rows else [],
+        category_plan_rows,
+    )
     write_csv(
         duplicate_review_path,
+        list(duplicate_review_rows[0].keys()) if duplicate_review_rows else [],
+        duplicate_review_rows,
+    )
+    write_xlsx(
+        duplicate_review_path.with_suffix(".xlsx"),
         list(duplicate_review_rows[0].keys()) if duplicate_review_rows else [],
         duplicate_review_rows,
     )
@@ -957,12 +1013,14 @@ def main() -> None:
         f"Duplicate SKU groups found in export: {len(duplicate_review_rows)}",
         f"Category chunks written: {len(category_plan_rows)}",
         f"Main import file: {primary_upload_path}",
+        f"Excel import file: {primary_upload_path.with_suffix('.xlsx')}",
     ]
     summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
     readme_path.write_text(
         "\n".join(
             [
                 "Use UPLOAD_THIS_TO_SQUARE.csv for the next Square baseline import.",
+                "Use UPLOAD_THIS_TO_SQUARE.xlsx if you want the same package in Excel format for review.",
                 "BASELINE_DUPLICATE_ARCHIVE.csv is the archive-only slice from the same import.",
                 "BASELINE_DUPLICATE_REVIEW.csv lists the duplicate/current-token cleanup decisions.",
                 "BASELINE_CATEGORY_PLAN.csv lists the new <=200-item category chunks.",

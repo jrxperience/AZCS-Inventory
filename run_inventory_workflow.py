@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 from collections import Counter
 from pathlib import Path
@@ -16,7 +17,6 @@ STEPS = (
     ("master inventory", "build_master_inventory.py"),
     ("sales match audit", "build_sales_match_audit.py"),
     ("pricing recommendations", "build_pricing_recommendations.py"),
-    ("baseline Square import", "build_baseline_square_inventory_import.py"),
 )
 
 
@@ -26,9 +26,9 @@ def clean_text(value: object) -> str:
     return str(value).replace("\xa0", " ").strip()
 
 
-def run_step(name: str, script_name: str) -> None:
+def run_step(name: str, command: list[str]) -> None:
     result = subprocess.run(
-        [sys.executable, script_name],
+        command,
         cwd=BASE_DIR,
         text=True,
         capture_output=True,
@@ -45,6 +45,14 @@ def run_step(name: str, script_name: str) -> None:
     if result.stderr.strip():
         print(f"[warn] {name}")
         print(result.stderr.strip())
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the full AZCS inventory workflow.")
+    parser.add_argument("--export", dest="export_path", help="Optional path to the current Square export CSV or XLSX.")
+    parser.add_argument("--template", dest="template_path", help="Optional path to the Square import template CSV.")
+    parser.add_argument("--run-tag", dest="run_tag", help="Optional run tag for the baseline import outputs.")
+    return parser.parse_args()
 
 
 def read_upload_records(path: Path) -> tuple[int, list[str], list[dict[str, str]]]:
@@ -96,8 +104,19 @@ def validate_upload(path: Path) -> list[str]:
 
 
 def main() -> None:
+    args = parse_args()
+
     for name, script_name in STEPS:
-        run_step(name, script_name)
+        run_step(name, [sys.executable, script_name])
+
+    baseline_command = [sys.executable, "build_baseline_square_inventory_import.py"]
+    if args.export_path:
+        baseline_command.extend(["--export", args.export_path])
+    if args.template_path:
+        baseline_command.extend(["--template", args.template_path])
+    if args.run_tag:
+        baseline_command.extend(["--run-tag", args.run_tag])
+    run_step("baseline Square import", baseline_command)
 
     if not UPLOAD_PATH.exists():
         raise FileNotFoundError(f"Expected final upload file was not created: {UPLOAD_PATH}")

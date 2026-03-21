@@ -111,6 +111,12 @@ Run:
 python run_inventory_workflow.py
 ```
 
+Or point the final baseline step at a specific Square export snapshot:
+
+```powershell
+python run_inventory_workflow.py --export "C:\Users\JRAZC\Downloads\MLT3E97CHP443_catalog-2026-03-20-2347.xlsx"
+```
+
 This reruns:
 
 1. `build_master_inventory.py`
@@ -121,6 +127,7 @@ This reruns:
 It validates the final upload file at:
 
 - [`square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.csv`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.csv)
+- [`square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.xlsx`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.xlsx)
 
 And writes a quick validation report here:
 
