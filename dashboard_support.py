@@ -401,6 +401,12 @@ def _write_run_log(run_dir: Path, result: RunResult) -> None:
 def run_workflow(workflow_key: str) -> RunResult:
     ensure_runtime_dirs()
     workflow = WORKFLOWS[workflow_key]
+
+    # Security verification for script execution
+    script_path = Path(workflow.script_name)
+    if script_path.parts != (workflow.script_name,) or not (BASE_DIR / workflow.script_name).is_file():
+        raise ValueError(f"Security error: invalid or missing script name '{workflow.script_name}'")
+
     started_at = datetime.now()
     completed = subprocess.run(
         [sys.executable, workflow.script_name],
