@@ -1,0 +1,11 @@
+Source inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_FINAL.csv
+Output inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_AGGRESSIVE.csv
+Starting rows: 10747
+Ending rows: 8116
+Non-chemical variant groups collapsed: 901
+Rows dropped in aggressive pass: 2631
+Rows raised to baseline price floor: 797
+Rows disabled at AZ Cleaning Supplies: 0
+Rows disabled at AZCS: 0
+Rows not sellable: 0
+Reduction report: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_AGGRESSIVE_REDUCTION_REPORT.csv

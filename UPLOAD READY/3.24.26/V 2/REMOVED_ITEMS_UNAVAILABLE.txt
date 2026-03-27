@@ -1,0 +1,6 @@
+Source inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_FINAL.csv
+Reduction report: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_AGGRESSIVE_REDUCTION_REPORT.csv
+Output inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\REMOVED_ITEMS_UNAVAILABLE_2026-03-24.csv
+Removed rows exported: 2631
+Rows not matched back to source: 0
+Online visibility setting used: unavailable

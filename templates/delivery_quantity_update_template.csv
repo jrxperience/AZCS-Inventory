@@ -1,0 +1,2 @@
+transaction_date,vendor,reference,sku,item_name,matched_location,quantity_received,current_quantity,new_quantity,match_method
+2026-03-24,Example Vendor,PI00057612,ABC123,Example Item,AZCS,12,4,16,exact_sku

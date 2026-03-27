@@ -1,0 +1,7 @@
+Source inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\UPLOAD_INVENTORY.csv
+Output inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_FLAT.csv
+Rows kept in flat upload: 10754
+Duplicate active SKU groups collapsed: 0
+Descriptions trimmed to 400 chars: 1164
+Rows still archived in final file: 0
+Rows still not sellable in final file: 0

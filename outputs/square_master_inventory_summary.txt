@@ -3,24 +3,24 @@ Overlap review file: C:\Codex\AZCS Inventory\outputs\square_master_inventory_ove
 Enrichment audit file: C:\Codex\AZCS Inventory\outputs\product_enrichment_audit.csv
 Source items normalized: 10406
 Rows included in Square import: 10406
-Rows sent to review: 195
+Rows sent to review: 196
 Duplicate item groups merged into one inventory row: 28
 Rows renamed to avoid duplicate item names: 47
-Rows with clarified customer-facing names: 684
+Rows with clarified customer-facing names: 686
 Generated replacement SKUs: 523
 Duplicate rows skipped inside the same source file: 1
 GTINs retained from source files: 2664
 GTINs added from verified overrides: 1
 GTINs added from catalog cross-reference: 59
-Rows still missing GTIN: 7447
+Rows still missing GTIN: 7453
 SEO titles generated: 10406
 Permalinks generated: 10406
-Vendor website row matches applied: 6273
-Vendor website GTINs applied: 235
-Vendor website descriptions applied: 2244
-Vendor website weights applied: 691
+Vendor website row matches applied: 6267
+Vendor website GTINs applied: 229
+Vendor website descriptions applied: 2239
+Vendor website weights applied: 685
 Vendor website images applied: 5917
-Rows with local product images matched: 2320
+Rows with local product images matched: 2321
 Counts by vendor:
   AZCS: 1
   BE: 2523
@@ -35,11 +35,11 @@ Counts by vendor:
   Trident: 32
   Tucker: 417
 Vendor website matches:
-  Barrens: 3498
+  Barrens: 3497
   EacoChem: 97
   GoldAssassin: 2
-  JRacenstein: 236
-  MPWSR: 2124
+  JRacenstein: 230
+  MPWSR: 2125
   Trident: 15
   Tucker: 301
 Notes:
@@ -51,20 +51,20 @@ Notes:
   - Product images are tracked in the internal image database export, not the Square import file.
   - MPWSR, Barens, and Tucker website enrichments only apply on exact SKU matches or unique exact-title matches.
   - JRacenstein matches use exact live product or variant code matches from the Storefront catalog, with size/name checks only to break ties. Trident and EacoChem matches use exact base product names plus the existing pack suffix.
-  - MPWSR website enrichment used 1798 live products and matched 2124 catalog rows.
-  - Barrens website enrichment used 3607 live products and matched 3498 catalog rows.
+  - MPWSR website enrichment used 1799 live products and matched 2125 catalog rows.
+  - Barrens website enrichment used 3686 live products and matched 3497 catalog rows.
   - Tucker website enrichment used 398 live products and matched 301 catalog rows.
-  - JRacenstein website enrichment matched 236 exact code rows.
+  - JRacenstein website enrichment matched 230 exact code rows.
   - Trident website enrichment matched 15 catalog rows.
   - EacoChem website enrichment matched 97 catalog rows.
   - Gold Assassin website enrichment matched 2 exact SKU rows. Left 1 conflicting existing weights unchanged.
   - Local image matches from J.racenstein images: 204
-  - Local image matches from Manatee images: 1693
+  - Local image matches from Manatee images: 1694
   - Local image matches from Trident images/media: 17
   - Local image matches from Tucker images: 406
   - Tucker images extracted from tucker list 2.docx: 417.
   - JR local image matches applied: 204.
   - Tucker local image matches applied: 406.
   - Trident local image matches applied: 17.
-  - Manatee local image matches applied: 1693.
+  - Manatee local image matches applied: 1694.
   - EacoChem Price List.pdf was not used because it duplicates the cleaner EacoChem source sheets.

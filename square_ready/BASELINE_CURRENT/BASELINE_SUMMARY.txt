@@ -1,15 +1,15 @@
 Template: C:\Codex\AZCS Inventory\Square Import Template.csv
-Current Square export: C:\Users\JRAZC\Downloads\MLT3E97CHP443_catalog-2026-03-20-2347.xlsx
+Current Square export: C:\Users\JRAZC\Downloads\MLT3E97CHP443_catalog-2026-03-23-1752.csv
 Master inventory source: C:\Codex\AZCS Inventory\outputs\square_master_inventory.csv
-Run tag: 2026-03-20_2347
-Final active rows: 10406
-Archive rows for duplicate tokens: 459
-Rows in full import file: 10865
-Master rows matched to export by SKU: 10343
-Master rows missing from export and added fresh: 63
-Export-only active rows kept: 0
-Managed-vendor export-only rows archived: 5
-Duplicate SKU groups found in export: 454
-Category chunks written: 115
+Run tag: 2026-03-23_1752
+Final active rows: 10761
+Archive rows for duplicate tokens: 782
+Rows in full import file: 11543
+Master rows matched to export by SKU: 10405
+Master rows missing from export and added fresh: 1
+Export-only active rows kept: 355
+Managed-vendor export-only rows archived: 6
+Duplicate SKU groups found in export: 776
+Category chunks written: 134
 Main import file: C:\Codex\AZCS Inventory\square_ready\BASELINE_CURRENT\UPLOAD_THIS_TO_SQUARE.csv
 Excel import file: C:\Codex\AZCS Inventory\square_ready\BASELINE_CURRENT\UPLOAD_THIS_TO_SQUARE.xlsx

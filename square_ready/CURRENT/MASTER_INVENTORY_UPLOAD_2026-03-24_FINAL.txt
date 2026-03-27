@@ -1,0 +1,11 @@
+Source inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_POLISHED.csv
+Output inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_FINAL.csv
+Starting rows: 10751
+Ending rows: 10747
+Collapsed duplicate-name groups: 4
+Dropped rows in final pass: 4
+Rows not sellable: 0
+Rows disabled at AZ Cleaning Supplies: 0
+Rows disabled at AZCS: 0
+Chemical size audit: C:\Codex\AZCS Inventory\square_ready\CURRENT\CHEMICAL_SIZE_AUDIT_2026-03-24.csv
+Reduction report: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_FINAL_REDUCTION_REPORT.csv

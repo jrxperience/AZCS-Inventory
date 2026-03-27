@@ -1,0 +1,2 @@
+reference,vendor,line_number,raw_item_name,raw_sku,raw_vendor_code,quantity_received,unit_cost,match_status,suggested_sku,suggested_item_name,suggested_vendor,confidence,review_reason
+"PI00057612","Example Vendor","12","Example Item Name","ABC-123","","5","19.95","needs_review","ABC123","Example Item","Example Vendor","0.81","Fuzzy match only; vendor code missing"

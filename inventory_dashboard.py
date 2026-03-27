@@ -17,12 +17,16 @@ from dashboard_support import (
     INPUT_FOLDERS,
     LATEST_DIR,
     RUNS_DIR,
+    SQUARE_READY_CURRENT_DIR,
     TO_IMPORT_DIR,
     TO_REVIEW_DIR,
     WORKFLOWS,
     copy_files_to_input,
     ensure_runtime_dirs,
+    get_current_upload_package,
+    get_current_upload_version_label,
     get_recommended_upload_files,
+    get_standard_handoff_files,
     list_input_files,
     list_latest_outputs,
     list_recent_runs,
@@ -33,17 +37,23 @@ from dashboard_support import (
 
 
 PALETTE = {
-    "bg": "#e9eef8",
-    "panel": "#f8f4eb",
-    "card": "#ffffff",
-    "ink": "#0f2d5c",
-    "muted": "#586781",
-    "accent": "#d1aa4a",
-    "accent_dark": "#8e6516",
-    "accent_soft": "#f3e3ae",
-    "border": "#c9b07b",
-    "success": "#2f6b4f",
-    "info": "#dce7fb",
+    "bg": "#f4efe5",
+    "panel": "#fff7e7",
+    "card": "#fffdf8",
+    "ink": "#1f2a44",
+    "muted": "#5d677e",
+    "accent": "#ff9b54",
+    "accent_dark": "#b75f23",
+    "accent_soft": "#ffd7b8",
+    "border": "#efb676",
+    "success": "#1f8a70",
+    "info": "#d8ecff",
+    "hero": "#16324f",
+    "hero_soft": "#235784",
+    "berry": "#c7517d",
+    "mint": "#b9f3e4",
+    "sky": "#d7e8ff",
+    "sun": "#ffe49c",
 }
 
 
@@ -99,6 +109,19 @@ WORKFLOW_PLAYBOOKS = {
             "Square-ready catalog price update file",
         ),
     },
+    "final_upload": {
+        "best_for": "Use when you want the final full catalog upload package for Square and want the workflow validated end to end.",
+        "steps": (
+            "Upload the newest vendor price lists and any sales or override files you want included.",
+            "Upload the fresh Square export you want to baseline against.",
+            "Run the final upload workflow and use the files in Square Ready.",
+        ),
+        "outputs": (
+            "Final Square upload CSV and Excel file",
+            "Validation report",
+            "Category plan and duplicate review files",
+        ),
+    },
     "receiving": {
         "best_for": "Use after hours when you exported Square, received stock, and want to import only the changed quantity rows.",
         "steps": (
@@ -129,6 +152,16 @@ WORKFLOW_PLAYBOOKS = {
 
 
 HOME_RECIPES = (
+    {
+        "title": "Final Square Upload",
+        "subtitle": "Best for the full catalog handoff.",
+        "steps": (
+            "Upload the newest vendor price lists and fresh Square export.",
+            "Run Build Final Square Upload.",
+            "Open Square Ready and use UPLOAD_INVENTORY.csv or UPLOAD_INVENTORY.xlsx.",
+        ),
+        "tab": "Workflows",
+    },
     {
         "title": "Tonight's Delivery",
         "subtitle": "Best for same-night stock receiving.",
@@ -178,6 +211,7 @@ WORKFLOW_COLORS = {
     "master_inventory": "#d1aa4a",
     "sales_match": "#6c58a7",
     "pricing": "#c64242",
+    "final_upload": "#1f6d5a",
     "receiving": "#4c72b0",
     "stock_snapshot": "#4d8b62",
 }
@@ -199,6 +233,8 @@ class InventoryDashboard(tk.Tk):
         self.workflow_widgets: dict[str, dict[str, object]] = {}
         self.latest_output_paths: list[Path] = []
         self.recent_run_paths: list[Path] = []
+        self.recommended_output_paths: list[Path] = []
+        self.current_upload_paths: list[Path] = []
         self.workflow_order = list(WORKFLOWS.keys())
         self.selected_latest_workflow = tk.StringVar(value=self.workflow_order[0])
 
@@ -210,6 +246,8 @@ class InventoryDashboard(tk.Tk):
         }
         self.outputs_summary_var = tk.StringVar(value="Choose a workflow to see its latest files.")
         self.outputs_subtitle_var = tk.StringVar(value="")
+        self.current_upload_summary_var = tk.StringVar(value="Checking current upload package...")
+        self.current_upload_subtitle_var = tk.StringVar(value="")
 
         self.brand_icon: tk.PhotoImage | None = None
         self.latest_log_text: ScrolledText | None = None
@@ -257,9 +295,11 @@ class InventoryDashboard(tk.Tk):
         )
 
         style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 8), background=PALETTE["accent"], foreground=PALETTE["ink"])
-        style.map("Primary.TButton", background=[("active", "#e6be58")])
+        style.map("Primary.TButton", background=[("active", "#ffb071")])
         style.configure("Secondary.TButton", padding=(10, 7), background=PALETTE["info"], foreground=PALETTE["ink"])
-        style.map("Secondary.TButton", background=[("active", "#edf3ff")])
+        style.map("Secondary.TButton", background=[("active", "#eef7ff")])
+        style.configure("Hero.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 8), background=PALETTE["berry"], foreground="#ffffff")
+        style.map("Hero.TButton", background=[("active", "#d86492")], foreground=[("active", "#ffffff")])
 
     def _build_layout(self) -> None:
         container = tk.Frame(self, bg=PALETTE["bg"])
@@ -330,36 +370,53 @@ class InventoryDashboard(tk.Tk):
         canvas.bind("<Leave>", unbind_mousewheel)
 
     def _build_header(self, parent: tk.Widget) -> None:
-        hero = tk.Frame(parent, bg=PALETTE["ink"], highlightthickness=1, highlightbackground=PALETTE["border"])
+        hero = tk.Frame(parent, bg=PALETTE["hero"], highlightthickness=1, highlightbackground=PALETTE["border"])
         hero.pack(fill="x")
 
-        left = tk.Frame(hero, bg=PALETTE["ink"])
+        left = tk.Frame(hero, bg=PALETTE["hero"])
         left.pack(side="left", fill="x", expand=True, padx=16, pady=16)
 
         if self.brand_icon is not None:
             scaled = self.brand_icon.subsample(4, 4)
             self.header_icon = scaled
-            tk.Label(left, image=scaled, bg=PALETTE["ink"]).pack(side="left", padx=(0, 14))
+            tk.Label(left, image=scaled, bg=PALETTE["hero"]).pack(side="left", padx=(0, 14))
 
-        text_wrap = tk.Frame(left, bg=PALETTE["ink"])
+        text_wrap = tk.Frame(left, bg=PALETTE["hero"])
         text_wrap.pack(side="left", fill="x", expand=True)
         tk.Label(
             text_wrap,
             text="AZ Cleaning Supplies Control Center",
             font=("Segoe UI", 22, "bold"),
-            fg="#f8e8bc",
-            bg=PALETTE["ink"],
+            fg="#fff2cc",
+            bg=PALETTE["hero"],
         ).pack(anchor="w")
         tk.Label(
             text_wrap,
-            text="Branded tools for catalog, pricing, receiving, outputs, and run history.",
+            text="Run the inventory workflow, spot the right upload file fast, and keep Square handoffs clean.",
             font=("Segoe UI", 10),
-            fg="#d7e4ff",
-            bg=PALETTE["ink"],
+            fg="#dcecff",
+            bg=PALETTE["hero"],
         ).pack(anchor="w", pady=(4, 0))
+        status_strip = tk.Frame(text_wrap, bg=PALETTE["hero"])
+        status_strip.pack(anchor="w", pady=(10, 0))
+        for text, color in (
+            ("Current upload package", PALETTE["sun"]),
+            ("Workflow archives", PALETTE["mint"]),
+            ("Square-ready handoff", PALETTE["accent_soft"]),
+        ):
+            tk.Label(
+                status_strip,
+                text=text,
+                font=("Segoe UI", 9, "bold"),
+                bg=color,
+                fg=PALETTE["ink"],
+                padx=10,
+                pady=4,
+            ).pack(side="left", padx=(0, 8))
 
-        actions = tk.Frame(hero, bg=PALETTE["ink"])
+        actions = tk.Frame(hero, bg=PALETTE["hero"])
         actions.pack(side="right", padx=16, pady=16)
+        ttk.Button(actions, text="Open Square Ready", style="Hero.TButton", command=lambda: self._open_path(SQUARE_READY_CURRENT_DIR)).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Open To Import", style="Secondary.TButton", command=lambda: self._open_path(TO_IMPORT_DIR)).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Open To Review", style="Secondary.TButton", command=lambda: self._open_path(TO_REVIEW_DIR)).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Open Repo Folder", style="Secondary.TButton", command=lambda: self._open_path(BASE_DIR)).pack(side="left")
@@ -391,10 +448,10 @@ class InventoryDashboard(tk.Tk):
         metrics_frame.pack(fill="x")
 
         metrics = [
-            ("Input Files", self.metric_vars["input_files"], PALETTE["accent_soft"]),
-            ("Latest Folders Ready", self.metric_vars["latest_ready"], PALETTE["info"]),
-            ("Archived Runs", self.metric_vars["archived_runs"], "#e5eefc"),
-            ("Workflows", self.metric_vars["workflows"], "#f7dfdf"),
+            ("Input Files", self.metric_vars["input_files"], PALETTE["sun"]),
+            ("Latest Folders Ready", self.metric_vars["latest_ready"], PALETTE["sky"]),
+            ("Archived Runs", self.metric_vars["archived_runs"], PALETTE["mint"]),
+            ("Workflows", self.metric_vars["workflows"], "#ffd9ea"),
         ]
         for index, (label, variable, bg_color) in enumerate(metrics):
             card = tk.Frame(metrics_frame, bg=bg_color, highlightthickness=1, highlightbackground=PALETTE["border"])
@@ -410,8 +467,19 @@ class InventoryDashboard(tk.Tk):
         body.grid_columnconfigure(0, weight=3)
         body.grid_columnconfigure(1, weight=2)
 
+        handoff_card = self._card(body, "Use This Upload Now", "The dashboard will always surface the best current full inventory package here first.")
+        handoff_card.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        handoff_banner = tk.Frame(handoff_card, bg=PALETTE["card"], highlightthickness=1, highlightbackground=PALETTE["border"])
+        handoff_banner.pack(fill="x", pady=(4, 0))
+        tk.Label(handoff_banner, textvariable=self.current_upload_summary_var, font=("Segoe UI", 12, "bold"), bg=PALETTE["card"], fg=PALETTE["ink"]).pack(anchor="w", padx=12, pady=(12, 2))
+        tk.Label(handoff_banner, textvariable=self.current_upload_subtitle_var, font=("Segoe UI", 10), bg=PALETTE["card"], fg=PALETTE["muted"], wraplength=1080, justify="left").pack(anchor="w", padx=12, pady=(0, 10))
+        handoff_buttons = tk.Frame(handoff_banner, bg=PALETTE["card"])
+        handoff_buttons.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(handoff_buttons, text="Open Recommended Upload", style="Hero.TButton", command=self._open_current_upload_file).pack(side="left", padx=(0, 8))
+        ttk.Button(handoff_buttons, text="Open Current Folder", command=lambda: self._open_path(SQUARE_READY_CURRENT_DIR)).pack(side="left")
+
         recipes_card = self._card(body, "Most Common Jobs", "Start here if you are not sure which workflow to run.")
-        recipes_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        recipes_card.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
 
         for recipe in HOME_RECIPES:
             recipe_frame = tk.Frame(recipes_card, bg=PALETTE["card"], highlightthickness=1, highlightbackground=PALETTE["border"])
@@ -431,10 +499,11 @@ class InventoryDashboard(tk.Tk):
             ttk.Button(recipe_frame, text=f"Go to {recipe['tab']}", command=lambda tab=recipe["tab"]: self._select_tab(tab)).pack(anchor="w", padx=12, pady=12)
 
         guide_card = self._card(body, "Plain-English Guide", "These rules make the dashboard easier for someone new to use.")
-        guide_card.grid(row=0, column=1, sticky="nsew")
+        guide_card.grid(row=1, column=1, sticky="nsew")
         guide_lines = [
             "Uploads is where new files go. Nothing runs from there until you click a workflow button.",
             "Workflows is where processing happens. Run one workflow at a time.",
+            "Square Ready is the first place to look for the current upload files.",
             "To Import holds the simple current import files with the easiest names to remember.",
             "To Review holds the current workbooks, review queues, and summary files.",
             "Outputs shows the newest successful files in clean folders, so you do not have to sort through the whole repo.",
@@ -448,6 +517,7 @@ class InventoryDashboard(tk.Tk):
         quick_card.pack(fill="x", pady=(14, 0))
         ttk.Button(quick_card, text="Open Uploads", command=lambda: self._select_tab("Uploads")).pack(side="left", padx=(0, 8))
         ttk.Button(quick_card, text="Open Workflows", command=lambda: self._select_tab("Workflows")).pack(side="left", padx=(0, 8))
+        ttk.Button(quick_card, text="Open Square Ready", command=lambda: self._open_path(SQUARE_READY_CURRENT_DIR)).pack(side="left", padx=(0, 8))
         ttk.Button(quick_card, text="Open To Import", command=lambda: self._open_path(TO_IMPORT_DIR)).pack(side="left", padx=(0, 8))
         ttk.Button(quick_card, text="Open To Review", command=lambda: self._open_path(TO_REVIEW_DIR)).pack(side="left")
 
@@ -622,6 +692,7 @@ class InventoryDashboard(tk.Tk):
         self.latest_selector.current(0)
         self.latest_selector.bind("<<ComboboxSelected>>", lambda event: self._on_latest_workflow_change(self.latest_selector.current()))
         ttk.Button(controls, text="Refresh", command=self.refresh_outputs).pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Open Square Ready", command=lambda: self._open_path(SQUARE_READY_CURRENT_DIR)).pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Open Latest Folder", command=self._open_current_latest_folder).pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Open Runs Folder", command=lambda: self._open_path(RUNS_DIR)).pack(side="left")
 
@@ -629,6 +700,27 @@ class InventoryDashboard(tk.Tk):
         summary.pack(fill="x", pady=(12, 0))
         tk.Label(summary, textvariable=self.outputs_summary_var, font=("Segoe UI", 11, "bold"), bg=PALETTE["card"], fg=PALETTE["ink"]).pack(anchor="w", padx=12, pady=(10, 2))
         tk.Label(summary, textvariable=self.outputs_subtitle_var, font=("Segoe UI", 10), bg=PALETTE["card"], fg=PALETTE["muted"], wraplength=1080, justify="left").pack(anchor="w", padx=12, pady=(0, 10))
+
+        handoff_frame = ttk.LabelFrame(shell, text="Use These Files Now", padding=10)
+        handoff_frame.pack(fill="x", pady=(12, 0))
+        self.recommended_listbox = tk.Listbox(
+            handoff_frame,
+            height=4,
+            bg="#fbfaf7",
+            fg=PALETTE["ink"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            selectbackground=PALETTE["accent"],
+            selectforeground="#ffffff",
+        )
+        self.recommended_listbox.pack(fill="x", expand=False)
+        self.recommended_listbox.bind("<Double-Button-1>", lambda event: self._open_selected_recommended_file())
+
+        handoff_buttons = tk.Frame(handoff_frame, bg=PALETTE["panel"])
+        handoff_buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(handoff_buttons, text="Open Selected File", command=self._open_selected_recommended_file).pack(side="left", padx=(0, 8))
+        ttk.Button(handoff_buttons, text="Open Square Ready Folder", command=lambda: self._open_path(SQUARE_READY_CURRENT_DIR)).pack(side="left")
 
         panes = ttk.Panedwindow(shell, orient="horizontal")
         panes.pack(fill="both", expand=True, pady=(12, 0))
@@ -691,6 +783,7 @@ class InventoryDashboard(tk.Tk):
             self.refresh_input_folder(key)
         self.refresh_outputs()
         self._refresh_metrics()
+        self._refresh_current_upload_package()
 
     def refresh_input_folder(self, folder_key: str) -> None:
         files = list_input_files(folder_key)
@@ -718,7 +811,9 @@ class InventoryDashboard(tk.Tk):
     def refresh_outputs(self) -> None:
         self._refresh_latest_files()
         self._refresh_recent_runs()
+        self._refresh_recommended_files()
         self._refresh_outputs_summary()
+        self._refresh_current_upload_package()
         self._refresh_metrics()
 
     def _refresh_metrics(self) -> None:
@@ -755,6 +850,20 @@ class InventoryDashboard(tk.Tk):
         else:
             self.recent_runs_listbox.insert("end", "No archived runs yet.")
 
+    def _refresh_recommended_files(self) -> None:
+        workflow_key = self.selected_latest_workflow.get()
+        recommended = get_current_upload_package() if workflow_key == "final_upload" else get_standard_handoff_files(workflow_key)
+        if not recommended:
+            recommended = get_recommended_upload_files(workflow_key)
+        self.recommended_output_paths = recommended
+        self.recommended_listbox.delete(0, "end")
+        if self.recommended_output_paths:
+            for path in self.recommended_output_paths:
+                modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                self.recommended_listbox.insert("end", f"{path.name}    ({modified})")
+        else:
+            self.recommended_listbox.insert("end", "No recommended handoff file yet. Run this workflow first.")
+
     def _refresh_outputs_summary(self) -> None:
         workflow_key = self.selected_latest_workflow.get()
         workflow = WORKFLOWS[workflow_key]
@@ -762,11 +871,31 @@ class InventoryDashboard(tk.Tk):
         latest_files = list_latest_outputs(workflow_key)
         self.outputs_summary_var.set(f"{workflow.name} | {len(latest_files)} latest file{'s' if len(latest_files) != 1 else ''} ready")
         outputs_text = ", ".join(playbook["outputs"]) if playbook["outputs"] else "Open the latest folder to review the files."
-        recommended = get_recommended_upload_files(workflow_key)
+        recommended = self.recommended_output_paths
         recommendation_text = ""
         if recommended:
-            recommendation_text = " Recommended Square upload: " + ", ".join(path.name for path in recommended) + " in to_import."
+            recommendation_text = " Use these files now: " + ", ".join(path.name for path in recommended) + "."
+        else:
+            recommendation_text = " No current handoff file is ready yet."
         self.outputs_subtitle_var.set(f"{playbook['best_for']} Main outputs: {outputs_text}.{recommendation_text}")
+
+    def _refresh_current_upload_package(self) -> None:
+        self.current_upload_paths = get_current_upload_package()
+        if self.current_upload_paths:
+            lead = self.current_upload_paths[0]
+            version_label = get_current_upload_version_label()
+            if version_label:
+                self.current_upload_summary_var.set(f"Recommended current upload: {lead.name} | {version_label}")
+            else:
+                self.current_upload_summary_var.set(f"Recommended current upload: {lead.name}")
+            extra = ", ".join(path.name for path in self.current_upload_paths[1:])
+            if extra:
+                self.current_upload_subtitle_var.set(f"Package files: {lead.name}, {extra}.")
+            else:
+                self.current_upload_subtitle_var.set("Open this file first for the current full inventory handoff.")
+        else:
+            self.current_upload_summary_var.set("No current upload package is ready yet.")
+            self.current_upload_subtitle_var.set("Run the final upload workflow or publish the current outputs first.")
 
     def _on_latest_workflow_change(self, index: int) -> None:
         workflow_key = self.workflow_order[index]
@@ -813,6 +942,19 @@ class InventoryDashboard(tk.Tk):
             messagebox.showinfo("Open File", "Select a latest output file first.")
             return
         self._open_path(self.latest_output_paths[selection[0]])
+
+    def _open_selected_recommended_file(self) -> None:
+        selection = self.recommended_listbox.curselection()
+        if not selection or not self.recommended_output_paths:
+            messagebox.showinfo("Open File", "Select a recommended handoff file first.")
+            return
+        self._open_path(self.recommended_output_paths[selection[0]])
+
+    def _open_current_upload_file(self) -> None:
+        if not self.current_upload_paths:
+            messagebox.showinfo("Open Upload", "No current upload package is ready yet.")
+            return
+        self._open_path(self.current_upload_paths[0])
 
     def _open_selected_run_folder(self) -> None:
         selection = self.recent_runs_listbox.curselection()

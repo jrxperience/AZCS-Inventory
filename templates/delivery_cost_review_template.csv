@@ -1,0 +1,2 @@
+reference,vendor,sku,item_name,current_unit_cost,invoiced_unit_cost,current_sell_price,price_floor,recommended_action,notes
+PI00057612,Example Vendor,ABC123,Example Item,15.00,19.95,29.99,29.99,review_cost_only,"Cost increased on invoice; selling price floor remains protected"

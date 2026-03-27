@@ -1,0 +1,20 @@
+model = "gpt-5.4"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "cached"
+model_reasoning_effort = "medium"
+personality = "pragmatic"
+
+[windows]
+sandbox = "elevated"
+
+[shell_environment_policy]
+include_only = ["PATH", "HOME"]
+
+[features]
+fast_mode = false
+multi_agent = false
+shell_snapshot = true
+shell_tool = true
+smart_approvals = false
+undo = true

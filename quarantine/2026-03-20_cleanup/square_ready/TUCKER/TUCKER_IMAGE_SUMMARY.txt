@@ -1,0 +1,8 @@
+Tucker inventory file: C:\Codex\AZCS Inventory\square_ready\TUCKER\TUCKER_ONLY_INVENTORY.csv
+Tucker image queue: C:\Codex\AZCS Inventory\square_ready\TUCKER\TUCKER_IMAGE_QUEUE.csv
+Tucker image workbook: C:\Codex\AZCS Inventory\square_ready\TUCKER\TUCKER_IMAGE_QUEUE.xlsx
+Tucker batch folder: C:\Codex\AZCS Inventory\square_ready\TUCKER\IMAGE_BATCHES
+Tucker image rows: 161
+Tucker image batches: 1
+
+Use only this folder for Tucker review and image matching.

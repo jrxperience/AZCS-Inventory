@@ -514,6 +514,13 @@ def compute_recommended_price(cost: Decimal, strategy: PricingStrategy) -> Decim
     return rounded_price.quantize(Decimal("0.01"))
 
 
+def competitive_price_cap(row: dict[str, str]) -> tuple[Decimal | None, str]:
+    blob = build_search_blob(row)
+    if "HURRICANE CAT 5" in blob and "KIT" in blob and "HALF KIT" not in blob:
+        return Decimal("599.99"), "Competitive cap kept Hurricane Cat 5 kits near the proven 599.99 price point."
+    return None, ""
+
+
 def choose_current_price(row: dict[str, str], updates: dict[str, PriceTotals]) -> tuple[Decimal | None, str, str]:
     sku = row.get("SKU", "").strip()
     update = updates.get(sku)
@@ -644,6 +651,7 @@ def main() -> None:
         sales_pricing_note = ""
         sales_signal_trusted = False
         sales_demand_tier = classify_sales_demand(sales_signal)
+        competitive_note = ""
 
         if cost is not None and cost > Decimal("0"):
             costed_rows += 1
@@ -671,6 +679,11 @@ def main() -> None:
                     sales_anchor_raise_count += 1
                     anchor_note = "Actual realized selling price supports a higher anchor."
                     sales_pricing_note = f"{sales_pricing_note} {anchor_note}".strip()
+
+            price_cap, cap_note = competitive_price_cap(row)
+            if price_cap is not None and computed_price > price_cap:
+                computed_price = price_cap
+                competitive_note = cap_note
 
             if current_price is not None and current_price > Decimal("0"):
                 current_priced_rows += 1
@@ -728,7 +741,7 @@ def main() -> None:
             if suggested_price is not None:
                 updated_row["Sellable"] = "Y"
 
-        combined_notes = " ".join(note for note in (pricing_notes, sales_pricing_note) if note).strip()
+        combined_notes = " ".join(note for note in (pricing_notes, sales_pricing_note, competitive_note) if note).strip()
 
         recommendation_rows.append(
             {

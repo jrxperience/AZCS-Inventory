@@ -40,6 +40,48 @@ LOCATION_PREFIXES = (
     "Stock Alert Count ",
     "Price ",
 )
+CHEMICAL_VENDOR_HINTS = {"EACOCHEM", "ENVIROBIOCLEANER", "FRONT9", "GOLDASSASSIN"}
+CHEMICAL_CATEGORY_HINTS = (
+    "CONCRETE CLEANERS",
+    "MULTIPURPOSE CLEANER",
+    "RESTORATION",
+    "SEALERS",
+    "STAIN",
+    "CHEMICAL",
+    "> SOAP",
+)
+CHEMICAL_PRODUCT_HINTS = (
+    "RUST AND OXIDATION REMOVER",
+    "RUST ERASER",
+    "MULTIPURPOSE CLEANER",
+    "EFFLORESCENCE AND CALCIUM REMOVER",
+    "RESTORER",
+    "BRIGHTENER",
+    "BARC",
+    "GROUNDSKEEPER",
+    "EFFLORESCENCE",
+    "C-TAR",
+    "CLEANSOL",
+    "GLIDE",
+    "ACRYLISTRIP",
+    "SODIUM HYDROXIDE",
+    "HOUSE WASH",
+    "SURFACTANT",
+    "ASSASSIN",
+    "HURRICANE CAT 5 SEALER",
+    "SQUEEGEE OFF",
+    "WINDOW MAULER",
+    "CLEAR SEAL",
+    "COLOR SEAL",
+    "ACCENT BASE",
+    "URETHANE",
+    "QUICK STRIP",
+    "COBBLE GRIP",
+    "COBBLE STRIP",
+)
+CHEMICAL_GENERIC_KEYWORDS = ("CLEANER", "DEGREASER", "RESTORER", "BRIGHTENER", "SURFACTANT", "SEALER", "REMOVER", "HOUSE WASH", "OXIDATION")
+CHEMICAL_PACKAGING_HINTS = ("GALLON", "PAIL", "DRUM", "BUCKET", "KIT", "LB BAG", "50 LB", "55 GALLON", "5 GALLON", "1 GALLON", "QUART", "OUNCE")
+CHEMICAL_EXCLUSIONS = ("NOZZLE", "FILTER", "HOSE", "LANCE", "BOTTLE", "SURFACE CLEANER", "PUMP", "SOCKET", "STRAINER", "INJECTOR", "SYSTEM", "SKID", "TRAILER", "WRENCH", "GUN", "WAND", "BUCKET", "CLAMP")
 
 VENDOR_ALIASES = {
     "BARENS": "BARRENS",
@@ -712,8 +754,104 @@ def pick_canonical_export_row(group: list[dict[str, str]]) -> dict[str, str]:
     return max(group, key=fill_score)
 
 
+def coalesce_export_group(group: list[dict[str, str]]) -> dict[str, str]:
+    canonical = dict(pick_canonical_export_row(group))
+
+    if any(clean_text(record.get("Enabled AZ Cleaning Supplies", "")).upper() == "Y" for record in group):
+        canonical["Enabled AZ Cleaning Supplies"] = "Y"
+    if any(clean_text(record.get("Enabled AZCS", "")).upper() == "Y" for record in group):
+        canonical["Enabled AZCS"] = "Y"
+
+    old_price = first_nonempty(*(record.get("Price AZ Cleaning Supplies", "") for record in group))
+    new_price = first_nonempty(*(record.get("Price AZCS", "") for record in group))
+    shared_price = first_nonempty(canonical.get("Price", ""), new_price, old_price)
+
+    if shared_price:
+        canonical["Price"] = shared_price
+        canonical["Price AZCS"] = shared_price
+        canonical["Price AZ Cleaning Supplies"] = shared_price
+
+    return canonical
+
+
 def is_location_field(header: str) -> bool:
     return any(header.startswith(prefix) for prefix in LOCATION_PREFIXES)
+
+
+def first_nonempty(*values: str) -> str:
+    for value in values:
+        cleaned = clean_text(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def record_blob(record: dict[str, str]) -> str:
+    return " | ".join(
+        clean_text(record.get(field, ""))
+        for field in (
+            "Item Name",
+            "Description",
+            "Categories",
+            "Reporting Category",
+            "Default Vendor Name",
+            "Default Vendor Code",
+        )
+    ).upper()
+
+
+def is_chemical_like_record(record: dict[str, str]) -> bool:
+    vendor = clean_text(record.get("Default Vendor Name", "")).upper().replace(" ", "")
+    if vendor in CHEMICAL_VENDOR_HINTS:
+        return True
+
+    category_blob = " | ".join(
+        (
+            clean_text(record.get("Categories", "")),
+            clean_text(record.get("Reporting Category", "")),
+        )
+    ).upper()
+    if any(keyword in category_blob for keyword in CHEMICAL_CATEGORY_HINTS):
+        return True
+
+    blob = record_blob(record)
+    if any(keyword in blob for keyword in CHEMICAL_EXCLUSIONS):
+        return False
+    if any(keyword in blob for keyword in CHEMICAL_PRODUCT_HINTS):
+        return True
+    return any(keyword in blob for keyword in CHEMICAL_GENERIC_KEYWORDS) and any(
+        keyword in blob for keyword in CHEMICAL_PACKAGING_HINTS
+    )
+
+
+def enforce_dual_location_rules(merged: dict[str, str], export_row: dict[str, str] | None) -> dict[str, str]:
+    export_old_enabled = clean_text(export_row.get("Enabled AZ Cleaning Supplies", "")) if export_row else ""
+    merged_old_enabled = clean_text(merged.get("Enabled AZ Cleaning Supplies", ""))
+    merged_new_enabled = clean_text(merged.get("Enabled AZCS", ""))
+
+    shared_price = first_nonempty(
+        merged.get("Price", ""),
+        merged.get("Price AZCS", ""),
+        merged.get("Price AZ Cleaning Supplies", ""),
+        export_row.get("Price AZCS", "") if export_row else "",
+        export_row.get("Price AZ Cleaning Supplies", "") if export_row else "",
+    )
+
+    if shared_price:
+        merged["Price"] = shared_price
+        if "Price AZCS" in merged:
+            merged["Price AZCS"] = shared_price
+        if "Price AZ Cleaning Supplies" in merged:
+            merged["Price AZ Cleaning Supplies"] = shared_price
+
+    if export_old_enabled.upper() == "Y" or merged_old_enabled.upper() == "Y" or (shared_price and is_chemical_like_record(merged)):
+        merged["Enabled AZ Cleaning Supplies"] = "Y"
+        if "Enabled AZCS" in merged:
+            merged["Enabled AZCS"] = "Y"
+    elif merged_new_enabled.upper() == "Y":
+        merged["Enabled AZCS"] = "Y"
+
+    return merged
 
 
 def merge_master_and_export(
@@ -730,15 +868,15 @@ def merge_master_and_export(
             merged[header] = clean_text(export_row.get(header) if export_row else "")
             continue
         if is_location_field(header):
-            merged[header] = clean_text(
-                (export_row.get(header) if export_row and clean_text(export_row.get(header)) else master_row.get(header, ""))
-            )
+            master_value = clean_text(master_row.get(header, ""))
+            export_value = clean_text(export_row.get(header, "")) if export_row else ""
+            merged[header] = master_value or export_value
             continue
         master_value = clean_text(master_row.get(header, ""))
         export_value = clean_text(export_row.get(header, "")) if export_row else ""
         merged[header] = master_value or export_value
     merged["Archived"] = "N"
-    return merged
+    return enforce_dual_location_rules(merged, export_row)
 
 
 def clone_to_template(record: dict[str, str], template_headers: list[str]) -> dict[str, str]:
@@ -884,12 +1022,13 @@ def main() -> None:
     archive_by_token: dict[str, dict[str, str]] = {}
     duplicate_review_rows: list[dict[str, str]] = []
     for sku, group in export_by_sku.items():
-        canonical = pick_canonical_export_row(group)
+        canonical_source = pick_canonical_export_row(group)
+        canonical = coalesce_export_group(group)
         canonical_export_by_sku[sku] = canonical
-        canonical_token = clean_text(canonical.get("Token"))
+        canonical_token = clean_text(canonical_source.get("Token")) or clean_text(canonical.get("Token"))
         for record in group:
             token = clean_text(record.get("Token"))
-            if record is canonical:
+            if record is canonical_source:
                 continue
             duplicate_review_rows.append(
                 {
@@ -917,7 +1056,8 @@ def main() -> None:
     export_only_rows = 0
     blank_sku_rows_kept = 0
     for sku in sorted(canonical_export_by_sku):
-        record = clone_to_template(canonical_export_by_sku[sku], template_headers)
+        export_record = canonical_export_by_sku[sku]
+        record = enforce_dual_location_rules(clone_to_template(export_record, template_headers), export_record)
         record["Reference Handle"] = ""
         if clean_text(record.get("Archived")).upper() == "Y":
             continue
@@ -933,6 +1073,7 @@ def main() -> None:
 
     for record in blank_sku_records:
         record["Reference Handle"] = ""
+        record = enforce_dual_location_rules(record, record)
         vendor_key = normalize_vendor(vendor_for_record(record))
         if vendor_key in managed_vendors:
             token = clean_text(record.get("Token"))

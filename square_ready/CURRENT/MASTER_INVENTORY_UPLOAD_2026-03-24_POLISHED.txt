@@ -1,0 +1,7 @@
+Source inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_FLAT.csv
+Output inventory: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_POLISHED.csv
+Starting rows: 10754
+Ending rows: 10751
+Exact item-name groups collapsed: 2
+Rows dropped in polish pass: 3
+Reduction report: C:\Codex\AZCS Inventory\square_ready\CURRENT\MASTER_INVENTORY_UPLOAD_2026-03-24_POLISHED_REDUCTION_REPORT.csv

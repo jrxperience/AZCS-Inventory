@@ -1,0 +1,2 @@
+reference,vendor,line_number,raw_item_name,raw_sku,raw_vendor_code,quantity_received,unit_cost,new_item_reason
+"PI00057612","Example Vendor","18","Brand New Item","NEW-001","VN-NEW-001","2","49.99","No inventory match found after SKU, vendor code, GTIN, and fuzzy vendor matching"

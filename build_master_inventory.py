@@ -50,6 +50,7 @@ TUCKER_IMAGE_DIR = IMAGE_DIR / "Tucker images"
 TRIDENT_IMAGE_DIR = IMAGE_DIR / "Trident images" / "media"
 
 CENT = Decimal("0.01")
+SQUARE_DESCRIPTION_MAX_CHARS = 400
 MONEY_RE = re.compile(r"\$?\s*\d[\d,\s]*\.\d{2}")
 GTIN_LENGTHS = {8, 12, 13, 14}
 GENERIC_CATEGORY_SEGMENTS = {"EQUIPMENT"}
@@ -143,6 +144,95 @@ TRIDENT_SITEMAP_URL = "https://www.tridentprotects.com/sitemap.xml"
 EACOCHEM_ALL_PRODUCTS_URL = "https://eacochem.com/all-products/"
 GOLD_ASSASSIN_BASE_URL = "https://www.goldassassin.com"
 GOLD_ASSASSIN_SITEMAP_URL = f"{GOLD_ASSASSIN_BASE_URL}/store-products-sitemap.xml"
+DUAL_LOCATION_CHEMICAL_CATEGORY_HINTS = (
+    "CONCRETE CLEANERS",
+    "MULTIPURPOSE CLEANER",
+    "RESTORATION",
+    "SEALERS",
+    "STAIN",
+    "CHEMICAL",
+    "> SOAP",
+)
+DUAL_LOCATION_CHEMICAL_PRODUCT_HINTS = (
+    "RUST AND OXIDATION REMOVER",
+    "RUST ERASER",
+    "MULTIPURPOSE CLEANER",
+    "EFFLORESCENCE AND CALCIUM REMOVER",
+    "RESTORER",
+    "BRIGHTENER",
+    "BARC",
+    "GROUNDSKEEPER",
+    "EFFLORESCENCE",
+    "C-TAR",
+    "CLEANSOL",
+    "GLIDE",
+    "ACRYLISTRIP",
+    "SODIUM HYDROXIDE",
+    "HOUSE WASH",
+    "SURFACTANT",
+    "ASSASSIN",
+    "HURRICANE CAT 5 SEALER",
+    "SQUEEGEE OFF",
+    "WINDOW MAULER",
+    "CLEAR SEAL",
+    "COLOR SEAL",
+    "ACCENT BASE",
+    "URETHANE",
+    "QUICK STRIP",
+    "COBBLE GRIP",
+    "COBBLE STRIP",
+)
+DUAL_LOCATION_CHEMICAL_GENERIC_KEYWORDS = (
+    "CLEANER",
+    "DEGREASER",
+    "RESTORER",
+    "BRIGHTENER",
+    "SURFACTANT",
+    "SEALER",
+    "REMOVER",
+    "HOUSE WASH",
+    "OXIDATION",
+)
+DUAL_LOCATION_CHEMICAL_PACKAGING_HINTS = (
+    "GALLON",
+    "PAIL",
+    "DRUM",
+    "BUCKET",
+    "KIT",
+    "LB BAG",
+    "50 LB",
+    "55 GALLON",
+    "5 GALLON",
+    "1 GALLON",
+    "QUART",
+    "OUNCE",
+)
+DUAL_LOCATION_CHEMICAL_EXCLUSIONS = (
+    "NOZZLE",
+    "FILTER",
+    "HOSE",
+    "LANCE",
+    "BOTTLE",
+    "SURFACE CLEANER",
+    "PUMP",
+    "SOCKET",
+    "STRAINER",
+    "INJECTOR",
+    "SYSTEM",
+    "SKID",
+    "TRAILER",
+    "WRENCH",
+    "GUN",
+    "WAND",
+    "BUCKET",
+    "CLAMP",
+)
+DUAL_LOCATION_CHEMICAL_VENDORS = {
+    "EACOCHEM",
+    "ENVIROBIOCLEANER",
+    "FRONT9",
+    "GOLDASSASSIN",
+}
 JRACENSTEIN_DISTINCTIVE_KEYWORDS = (
     "SCRAPER",
     "BRUSH",
@@ -467,6 +557,14 @@ def product_description_text(item: SourceItem) -> str:
     return clean_text(item.description_override or item.description)
 
 
+def square_description_text(item: SourceItem, max_chars: int = SQUARE_DESCRIPTION_MAX_CHARS) -> str:
+    description = product_description_text(item)
+    if len(description) <= max_chars:
+        return description
+    clipped = description[: max_chars - 3].rstrip()
+    return f"{clipped}..."
+
+
 def split_variant_suffix(item_name: str) -> tuple[str, str]:
     base, separator, suffix = clean_text(item_name).partition(" - ")
     return clean_text(base), clean_text(suffix) if separator else ""
@@ -567,6 +665,34 @@ def make_category(vendor: str, category: str = "") -> str:
     if category:
         return f"{vendor} > {clean_text(category)}"
     return vendor
+
+
+JRACENSTEIN_BRAND_KEYWORDS = {
+    "Moerman": (
+        "MOERMAN",
+        "LIQUIDATOR",
+        "EXCELERATOR",
+        "FLIQ",
+        "COMBINATOR",
+        "DR. ANGLE",
+        "DR ANGLE",
+        "SIDEKIT",
+        "SIDE KIT",
+        "NXT-R",
+        "NXT R",
+    ),
+    "Sorbo": (
+        "SORBO",
+    ),
+}
+
+
+def infer_jracenstein_brand(item_name: str, category: str, sku: str) -> str:
+    text = clean_text(f"{item_name} {category} {sku}").upper()
+    for brand, keywords in JRACENSTEIN_BRAND_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            return brand
+    return "JRacenstein"
 
 
 def read_csv_any(path: Path) -> list[list[str]]:
@@ -777,6 +903,7 @@ def parse_jracenstein(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
         if not item_name:
             continue
 
+        brand_vendor = infer_jracenstein_brand(item_name, category, sku)
         description = build_description(
             item_name,
             f"Category: {category}" if category else "",
@@ -784,13 +911,13 @@ def parse_jracenstein(path: Path) -> tuple[list[SourceItem], list[ReviewIssue]]:
         )
         items.append(
             SourceItem(
-                vendor="JRacenstein",
+                vendor=brand_vendor,
                 source_file=path.name,
                 item_name=item_name,
                 sku=sku,
                 description=description,
-                category=make_category("JRacenstein", category),
-                reporting_category="JRacenstein",
+                category=make_category(brand_vendor, category),
+                reporting_category=brand_vendor,
                 default_unit_cost=cost,
                 price=price,
                 vendor_code=sku,
@@ -3038,6 +3165,8 @@ def merge_group_items(group_items: list[SourceItem]) -> SourceItem:
         merged_item.category = next((item.category for item in group_items if clean_text(item.category)), "")
     if not clean_text(merged_item.reporting_category):
         merged_item.reporting_category = next((item.reporting_category for item in group_items if clean_text(item.reporting_category)), "")
+    if not any("Merged duplicate source rows." in note for note in merged_item.notes):
+        merged_item.notes.append("Merged duplicate source rows.")
 
     return merged_item
 
@@ -3353,13 +3482,51 @@ def generate_unique_skus(items: list[SourceItem]) -> int:
     return updated
 
 
+def item_location_blob(item: SourceItem) -> str:
+    parts = (
+        item.item_name,
+        item.description,
+        item.category,
+        item.reporting_category,
+        item.vendor,
+        item.vendor_code,
+    )
+    return " | ".join(clean_text(part) for part in parts).upper()
+
+
+def is_chemical_like_item(item: SourceItem) -> bool:
+    vendor = clean_text(item.vendor).upper().replace(" ", "")
+    if vendor in DUAL_LOCATION_CHEMICAL_VENDORS:
+        return True
+    category_blob = " | ".join((clean_text(item.category), clean_text(item.reporting_category))).upper()
+    if any(keyword in category_blob for keyword in DUAL_LOCATION_CHEMICAL_CATEGORY_HINTS):
+        return True
+    blob = item_location_blob(item)
+    if any(keyword in blob for keyword in DUAL_LOCATION_CHEMICAL_EXCLUSIONS):
+        return False
+    if any(keyword in blob for keyword in DUAL_LOCATION_CHEMICAL_PRODUCT_HINTS):
+        return True
+    return any(keyword in blob for keyword in DUAL_LOCATION_CHEMICAL_GENERIC_KEYWORDS) and any(
+        keyword in blob for keyword in DUAL_LOCATION_CHEMICAL_PACKAGING_HINTS
+    )
+
+
+def is_merged_inventory_item(item: SourceItem) -> bool:
+    return any("Merged duplicate source rows." in note for note in item.notes)
+
+
+def should_enable_both_locations(item: SourceItem) -> bool:
+    return item.price is not None and (is_chemical_like_item(item) or is_merged_inventory_item(item))
+
+
 def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     row = {field: "" for field in fieldnames}
     customer_facing_name = product_display_name(item)
-    description_text = product_description_text(item)
+    description_text = square_description_text(item)
     seo_title = build_seo_title(item)
     seo_description = build_seo_description(item, seo_title)
     location_price = format_money(item.price)
+    dual_location_enabled = should_enable_both_locations(item)
 
     def assign(field: str, value: str) -> None:
         if field in row:
@@ -3397,9 +3564,9 @@ def build_square_row(item: SourceItem, fieldnames: list[str]) -> dict[str, str]:
     assign("Default Vendor Name", item.vendor)
     assign("Default Vendor Code", clean_text(item.vendor_code or item.sku))
     assign("Permalink", clean_text(item.permalink_override))
-    assign("Enabled AZ Cleaning Supplies", "N")
+    assign("Enabled AZ Cleaning Supplies", "Y" if dual_location_enabled else "N")
     assign("Stock Alert Enabled AZ Cleaning Supplies", "N")
-    assign("Price AZ Cleaning Supplies", "")
+    assign("Price AZ Cleaning Supplies", location_price)
     assign("Enabled AZCS", "Y")
     assign("Stock Alert Enabled AZCS", "N")
     assign("Price AZCS", location_price)

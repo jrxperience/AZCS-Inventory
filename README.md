@@ -49,6 +49,8 @@ There is also one full validation runner for the main catalog-to-upload flow:
   The dashboard also keeps the most important current import files here with simpler names like `catalog_import_current.csv`, `receiving_import.csv`, and `catalog_price_update.csv`.
 - `to_review/`
   The dashboard keeps the most important current review files here with simpler names like `pricing_recommendations.xlsx`, `catalog_overlap_review.csv`, and `sales_match_review.csv`.
+- `square_ready/CURRENT/`
+  Use this folder first when you want the cleanest current handoff files. It keeps stable names like `UPLOAD_INVENTORY.csv`, `UPLOAD_INVENTORY.xlsx`, and `UPLOAD_VALIDATION.txt`.
 
 ## Run the dashboard
 
@@ -65,8 +67,9 @@ Or on Windows, double-click:
 What the dashboard gives you:
 
 - one place to copy files into the right input folders
-- one-click workflow runs for master inventory, sales match, pricing, receiving, and stock snapshots
+- one-click workflow runs for master inventory, sales match, pricing, the final Square upload, receiving, and stock snapshots
 - a cleaner `latest/<workflow>/` area for the newest successful files
+- a `square_ready/CURRENT/` folder with the simplest current upload file names
 - simpler `to_import/` and `to_review/` folders with easy-to-remember current file names
 - timestamped `runs/<timestamp>/<workflow>/` archives for run history and logs
 
@@ -128,10 +131,13 @@ It validates the final upload file at:
 
 - [`square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.csv`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.csv)
 - [`square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.xlsx`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/UPLOAD_THIS_TO_SQUARE.xlsx)
+- [`square_ready/CURRENT/UPLOAD_INVENTORY.csv`](/C:/Codex/AZCS%20Inventory/square_ready/CURRENT/UPLOAD_INVENTORY.csv)
+- [`square_ready/CURRENT/UPLOAD_INVENTORY.xlsx`](/C:/Codex/AZCS%20Inventory/square_ready/CURRENT/UPLOAD_INVENTORY.xlsx)
 
 And writes a quick validation report here:
 
 - [`square_ready/BASELINE_CURRENT/WORKFLOW_VALIDATION.txt`](/C:/Codex/AZCS%20Inventory/square_ready/BASELINE_CURRENT/WORKFLOW_VALIDATION.txt)
+- [`square_ready/CURRENT/UPLOAD_VALIDATION.txt`](/C:/Codex/AZCS%20Inventory/square_ready/CURRENT/UPLOAD_VALIDATION.txt)
 
 ## Track deliveries, stock, and selling prices
 
