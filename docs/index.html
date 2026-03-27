@@ -309,7 +309,7 @@
 <script>
   // ── Password ──────────────────────────────────────────────────
   // To change: update PASSWORD_HASH to sha256(newPassword)
-  const PASSWORD_HASH = "a591b5b26d6c17a2b0dcab7efdd8fa5b6ef0aeeda7a7c4a1f0ecf7c8bcfe6b2e"; // AZCS2026
+  const PASSWORD_HASH = "bcd3d77cef00384b7f61be6f2037f2e7882b02efd6943014c959ebb57ea83405"; // AZCS2026
 
   async function sha256(str) {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
