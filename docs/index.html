@@ -295,7 +295,7 @@
               <th>Item</th>
               <th>SKU</th>
               <th>Vendor</th>
-              <th>Cost</th>
+              <th>Qty</th>
               <th>Price</th>
             </tr>
           </thead>
@@ -377,9 +377,7 @@
         : `<span class="qty-pill neg-qty">${r.total_qty}</span>` +
           `<div class="item-sub">AZ: ${r.qty_az} &nbsp;|&nbsp; AZCS: ${r.qty_azcs}</div>`;
 
-      const priceCell = panel === "in"
-        ? `<span class="price-cell">${fmt(r.price)}</span>`
-        : `<div class="price-cell">${fmt(r.price)}</div><div class="cost-cell">Cost: ${fmt(r.cost)}</div>`;
+      const priceCell = `<div class="price-cell">${fmt(r.price)}</div><div class="cost-cell">Cost: ${fmt(r.cost)}</div>`;
 
       return `<tr
         data-name="${esc(r.name)}"
